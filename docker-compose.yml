@@ -1,0 +1,87 @@
+version: "3.8"
+
+services:
+  # ------------------------------------------------------------------
+  # MinIO — S3-compatible object storage backing the Iceberg warehouse
+  # ------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------------------------------
+  # One-shot init container: creates the warehouse bucket
+  # ------------------------------------------------------------------
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 admin password &&
+      mc mb --ignore-existing local/orderbook-warehouse &&
+      echo 'Bucket orderbook-warehouse ready'
+      "
+
+  # ------------------------------------------------------------------
+  # Apache Polaris — Iceberg REST catalog
+  # ------------------------------------------------------------------
+  polaris:
+    image: apache/polaris:latest
+    container_name: polaris
+    ports:
+      - "8181:8181"   # Catalog + management API
+      - "8182:8182"   # Health/metrics
+    environment:
+      # Fixed root credentials so the demo is reproducible
+      # (realm,clientId,clientSecret)
+      POLARIS_BOOTSTRAP_CREDENTIALS: "default-realm,root,s3cr3t"
+      # Credentials Polaris uses to talk to MinIO (S3FileIO)
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+      # In-memory metastore is fine for a demo (state lost on restart)
+      polaris.persistence.type: in-memory
+      polaris.realm-context.realms: default-realm
+      # Allow non-AWS S3 endpoints (MinIO) without role assumption
+      polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION": "true"
+      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": '["S3"]'
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8182/q/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------------------------------------------
+  # One-shot init container: creates the 'orderbook' catalog + grants
+  # ------------------------------------------------------------------
+  polaris-init:
+    image: curlimages/curl:latest
+    container_name: polaris-init
+    depends_on:
+      polaris:
+        condition: service_healthy
+    volumes:
+      - ./polaris-setup.sh:/setup.sh:ro
+    entrypoint: ["/bin/sh", "/setup.sh"]
+
+volumes:
+  minio-data:
