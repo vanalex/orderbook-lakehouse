@@ -60,7 +60,7 @@ services:
       polaris.realm-context.realms: default-realm
       # Allow non-AWS S3 endpoints (MinIO) without role assumption
       polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION": "true"
-      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": '["S3","FILE"]'
+      polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": '["S3"]'
     depends_on:
       minio-init:
         condition: service_completed_successfully
