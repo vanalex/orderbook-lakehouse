@@ -10,7 +10,7 @@ REALM        ?= default-realm
 CLIENT_ID    ?= root
 CLIENT_SECRET?= s3cr3t
 CATALOG      ?= orderbook
-NAMESPACE    ?=my_ns
+NAMESPACE    ?=bronze
 
 MGMT     := $(POLARIS)/api/management/v1
 CAT      := $(POLARIS)/api/catalog/v1
@@ -67,9 +67,9 @@ principal-roles: ## List all principal roles
 namespaces: ## List namespaces in a catalog (CATALOG=orderbook)
 	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces)
 
-tables: ## List tables in a namespace (CATALOG=orderbook NAMESPACE=my_ns)
+tables: ## List tables in a namespace (CATALOG=orderbook NAMESPACE=bronze)
 	@if [ -z "$(NAMESPACE)" ]; then \
-	  echo "Set NAMESPACE, e.g. make tables NAMESPACE=my_ns" >&2; exit 1; \
+	  echo "Set NAMESPACE, e.g. make tables NAMESPACE=bronze" >&2; exit 1; \
 	fi
 	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces/$(NAMESPACE)/tables)
 

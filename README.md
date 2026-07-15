@@ -114,7 +114,7 @@ make catalog-roles     # list catalog roles
 make principals        # list principals
 make principal-roles   # list principal roles
 make namespaces        # list namespaces in the catalog
-make tables NAMESPACE=my_ns   # list tables in a namespace
+make tables NAMESPACE=bronze  # list tables in a namespace
 ```
 
 Override defaults via variables, e.g. `make catalog CATALOG=orderbook` or
