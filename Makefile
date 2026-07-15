@@ -37,7 +37,7 @@ endef
 
 .PHONY: help token health catalogs catalog catalog-roles \
         principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
-        spark-smoke-test
+        spark-smoke-test spark-create-bronze-table
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -84,3 +84,7 @@ spark-init-namespaces: ## Create bronze/silver/gold namespaces via Spark (exampl
 spark-smoke-test: ## End-to-end table write/read check via Spark (example.SmokeTest); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.SmokeTest"
+
+spark-create-bronze-table: ## Create orderbook.bronze.raw_events via Spark (example.CreateBronzeTable); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.CreateBronzeTable"

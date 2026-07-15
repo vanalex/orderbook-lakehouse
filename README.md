@@ -181,6 +181,20 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   make spark-smoke-test
   ```
 
+- **`example.OrderBookSchema`** — not a job, but the order-book event schema (Phase 1 of
+  `data_pipeline_plan.md`): the raw feed's five event kinds (`add`, `cancel`, `modify`, `trade`,
+  `snapshot`) and the bronze `StructType` for `orderbook.bronze.raw_events` (append-only,
+  minimal typing — silver is where types get validated/cast, per Phase 4).
+
+- **`example.CreateBronzeTable`** — creates `orderbook.bronze.raw_events` with the schema from
+  `OrderBookSchema`. Rerunnable (`createOrReplace`).
+
+  ```sh
+  sbt "runMain example.CreateBronzeTable"
+  # or:
+  make spark-create-bronze-table
+  ```
+
 ## Configuration notes
 
 Polaris is configured for **local/demo use only** — see the `polaris` service environment in
