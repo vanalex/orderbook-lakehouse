@@ -96,15 +96,61 @@ Run automatically by the `polaris-init` container against the in-container Polar
 3. Grants the auto-created `catalog_admin` role `CATALOG_MANAGE_CONTENT` and attaches it to the
    `service_admin` principal role (which `root` holds), giving `root` full access to the catalog.
 
+## Inspecting Polaris (Makefile)
+
+The `Makefile` wraps read-only ("get") queries against the running Polaris catalog. Each target
+fetches a fresh OAuth token as `root` and pretty-prints the JSON response (requires `curl` + `jq`).
+
+```sh
+make help              # list all targets
+make health            # Polaris health endpoint
+make token             # print an access token
+make catalogs          # list all catalogs
+make catalog           # get the orderbook catalog
+make catalog-roles     # list catalog roles
+make principals        # list principals
+make principal-roles   # list principal roles
+make namespaces        # list namespaces in the catalog
+make tables NAMESPACE=my_ns   # list tables in a namespace
+```
+
+Override defaults via variables, e.g. `make catalog CATALOG=orderbook` or
+`make catalogs POLARIS=http://localhost:8181`.
+
 ## The Scala app
 
 ```sh
 sbt compile   # build
 sbt test      # run tests (munit)
-sbt run       # run — currently prints "hello"
 ```
 
 Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`).
+
+### Jobs
+
+- **`example.ListCatalogs`** — connects to the Polaris management API and lists the registered
+  catalogs. Uses `requests-scala` + `upickle` for HTTP/JSON.
+
+  ```sh
+  sbt "runMain example.ListCatalogs"
+  # or via the Makefile (passes the demo config through as env vars):
+  make scala-catalogs
+  ```
+
+  Config is read from the environment: `POLARIS_URL`, `POLARIS_REALM`, `POLARIS_CLIENT_ID`,
+  `POLARIS_CLIENT_SECRET` (defaults match the demo stack).
+
+  To override without exporting vars by hand, copy the sample env file — `make scala-catalogs`
+  sources `.env` (if present) into the environment before running the job:
+
+  ```sh
+  cp .env.example .env   # then edit as needed
+  make scala-catalogs
+  ```
+
+  `.env` is gitignored. The JVM has no built-in `.env` support, so the Makefile's shell loads it;
+  running `sbt "runMain example.ListCatalogs"` directly won't pick it up unless you source it
+  yourself (`set -a; . ./.env; set +a`).
 
 ## Configuration notes
 

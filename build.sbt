@@ -8,6 +8,8 @@ ThisBuild / organizationName := "example"
 lazy val root = (project in file("."))
   .settings(
     name := "orderbook-lakehouse",
+    libraryDependencies += requests,
+    libraryDependencies += upickle,
     libraryDependencies += munit % Test
   )
 
