@@ -2,16 +2,17 @@
 
 A demo lakehouse for order-book data, built on the **Apache Iceberg** table format with an
 **Apache Polaris** REST catalog and **MinIO** (S3-compatible) object storage. The application
-layer is a Scala 2.13 project (currently a skeleton).
+layer is a Scala 2.13 project using **Apache Spark** (local mode) to read/write Iceberg tables.
 
-> Status: infrastructure bootstrapped. The Scala app is still a `Hello`-world placeholder —
-> the Iceberg read/write jobs are the next step.
+> Status: infrastructure bootstrapped, Spark wired to the Polaris REST catalog. The
+> `bronze`/`silver`/`gold` namespaces exist and table reads/writes are verified end to end —
+> the ingestion/transform jobs themselves are the next step.
 
 ## Architecture
 
 ```
 ┌──────────────┐      Iceberg REST       ┌──────────────┐      S3 API      ┌──────────────┐
-│  Scala app   │ ──────────────────────► │   Polaris    │ ───────────────► │    MinIO     │
+│  Spark job   │ ──────────────────────► │   Polaris    │ ───────────────► │    MinIO     │
 │  (Iceberg    │   catalog + metadata    │  REST catalog│   data + metadata│  object store│
 │   client)    │                         │  :8181       │                  │  :9000/:9001 │
 └──────────────┘                         └──────────────┘                  └──────────────┘
@@ -21,12 +22,14 @@ layer is a Scala 2.13 project (currently a skeleton).
   (bucket `orderbook-warehouse`).
 - **Polaris** — Iceberg REST catalog that manages namespaces, tables, and metadata,
   storing data files in MinIO.
-- **Scala app** — connects to Polaris over the Iceberg REST protocol to read/write tables.
+- **Scala/Spark app** — connects to Polaris over the Iceberg REST protocol, using Spark SQL to
+  read/write tables (see `example.PolarisSpark`).
 
 ## Prerequisites
 
 - Docker + Docker Compose
-- JDK 11+ and [sbt](https://www.scala-sbt.org/) (for the Scala app)
+- JDK 17+ (tested on 21) and [sbt](https://www.scala-sbt.org/) (for the Scala/Spark app) —
+  Spark needs `--add-opens` JVM flags to run on Java 17+, which `build.sbt` sets up via `fork`
 
 ## Quickstart
 
@@ -152,6 +155,32 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   running `sbt "runMain example.ListCatalogs"` directly won't pick it up unless you source it
   yourself (`set -a; . ./.env; set +a`).
 
+- **`example.PolarisSpark`** — not a job itself, but the shared `SparkSession` factory every
+  Spark job builds on. Configures Spark's Iceberg REST catalog (`spark.sql.catalog.orderbook`)
+  to talk to Polaris for metadata and directly to MinIO (via `S3FileIO`) for data files. Config
+  is read from the environment, extending the `ListCatalogs` vars with:
+  `POLARIS_CATALOG`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `AWS_REGION`.
+
+- **`example.CreateNamespaces`** — sanity-check job for the Spark ↔ Polaris wiring: creates the
+  `bronze`/`silver`/`gold` namespaces the medallion pipeline will use and lists what's in the
+  catalog afterward.
+
+  ```sh
+  sbt "runMain example.CreateNamespaces"
+  # or:
+  make spark-init-namespaces
+  ```
+
+- **`example.SmokeTest`** — end-to-end check of the full data path: creates a real Iceberg
+  table, writes rows, reads them back, then drops the table. This is what actually needed the
+  storage/network fixes below — `CreateNamespaces` only exercises catalog metadata, not MinIO.
+
+  ```sh
+  sbt "runMain example.SmokeTest"
+  # or:
+  make spark-smoke-test
+  ```
+
 ## Configuration notes
 
 Polaris is configured for **local/demo use only** — see the `polaris` service environment in
@@ -167,3 +196,27 @@ Polaris is configured for **local/demo use only** — see the `polaris` service 
 
 These are fine for a demo but must be hardened before any real deployment. See
 [Configuring Polaris for production](https://polaris.apache.org/in-dev/unreleased/configuring-polaris-for-production).
+
+### Making Polaris + MinIO actually work for table writes
+
+Getting Spark to successfully commit an Iceberg table (not just list catalogs/namespaces)
+against Polaris + MinIO needed three non-obvious fixes, all present in this repo already but
+worth knowing about if you touch this config:
+
+1. **`stsUnavailable: true`** on the catalog's `storageConfigInfo` (set in `polaris-setup.sh`).
+   Without it, Polaris' `SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION` flag alone doesn't stop it from
+   attempting STS-based credential vending (a known upstream limitation —
+   [apache/polaris#379](https://github.com/apache/polaris/issues/379)).
+2. **`AWS_ENDPOINT_URL_S3` / `AWS_ENDPOINT_URL_STS`** env vars on the `polaris` service, both
+   pointing at MinIO. Polaris' own internal S3 client (used for server-side commit bookkeeping,
+   separate from the per-catalog client config) otherwise defaults to real AWS and fails with
+   `403 The AWS Access Key Id you provided does not exist in our records`.
+3. **`MINIO_DOMAIN` on MinIO + a network alias `orderbook-warehouse.minio`** on the `minio`
+   service. Even with the endpoint overrides above, Polaris' internal client addresses buckets
+   virtual-hosted-style (`<bucket>.<host>`) regardless of the catalog's `pathStyleAccess`
+   setting. `MINIO_DOMAIN` teaches MinIO to recognize that style, and the alias makes
+   `orderbook-warehouse.minio` resolve to the MinIO container.
+
+None of this affects how the Spark *client* talks to MinIO (that path already used path-style
+access via `s3.path-style-access=true`, set in `example.PolarisSpark`) — it's specifically about
+requests Polaris itself makes internally when committing a table.

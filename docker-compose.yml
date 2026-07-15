@@ -13,9 +13,21 @@ services:
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password
+      # Lets MinIO recognize virtual-hosted-style requests (<bucket>.minio).
+      # Polaris' own internal S3 client (used for server-side commit
+      # bookkeeping, separate from the path-style config Spark clients use)
+      # addresses buckets this way regardless of the catalog's
+      # pathStyleAccess setting.
+      MINIO_DOMAIN: minio
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
+    networks:
+      default:
+        aliases:
+          # Resolves the virtual-hosted-style host Polaris builds for the
+          # 'orderbook-warehouse' bucket back to this container.
+          - orderbook-warehouse.minio
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -55,6 +67,12 @@ services:
       AWS_ACCESS_KEY_ID: admin
       AWS_SECRET_ACCESS_KEY: password
       AWS_REGION: us-east-1
+      # Without these, Polaris' internal S3/STS clients (used for
+      # server-side commit/task bookkeeping, not just the client-facing
+      # catalog config) default to real AWS instead of MinIO, causing
+      # spurious 403s ("Access Key Id does not exist") on table commits.
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_ENDPOINT_URL_STS: http://minio:9000
       # In-memory metastore is fine for a demo (state lost on restart)
       polaris.persistence.type: in-memory
       polaris.realm-context.realms: default-realm

@@ -36,7 +36,8 @@ curl -s "$(1)" \
 endef
 
 .PHONY: help token health catalogs catalog catalog-roles \
-        principals principal-roles namespaces tables scala-catalogs
+        principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
+        spark-smoke-test
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -75,3 +76,11 @@ tables: ## List tables in a namespace (CATALOG=orderbook NAMESPACE=my_ns)
 scala-catalogs: ## List catalogs via the Scala job (example.ListCatalogs); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.ListCatalogs"
+
+spark-init-namespaces: ## Create bronze/silver/gold namespaces via Spark (example.CreateNamespaces); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.CreateNamespaces"
+
+spark-smoke-test: ## End-to-end table write/read check via Spark (example.SmokeTest); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.SmokeTest"

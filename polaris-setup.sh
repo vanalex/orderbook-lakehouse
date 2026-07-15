@@ -37,7 +37,8 @@ curl -s -X POST "$POLARIS/api/management/v1/catalogs" \
         "storageType": "S3",
         "allowedLocations": ["s3://orderbook-warehouse/"],
         "endpoint": "http://minio:9000",
-        "pathStyleAccess": true
+        "pathStyleAccess": true,
+        "stsUnavailable": true
       }
     }
   }'
