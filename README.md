@@ -195,6 +195,29 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   make spark-create-bronze-table
   ```
 
+- **`example.CreateSilverTable`** — creates `orderbook.silver.book_events` with the schema from
+  `OrderBookSchema`, partitioned by `instrument`/`event_date`. Rerunnable (`createOrReplace`).
+
+  ```sh
+  sbt "runMain example.CreateSilverTable"
+  # or:
+  make spark-create-silver-table
+  ```
+
+- **`example.BuildSilverEvents`** — Silver transform (Phase 4 of `data_pipeline_plan.md`): reads
+  `orderbook.bronze.raw_events`, drops malformed rows (unknown `event_type`, missing required
+  fields, an invalid `side`, or a missing `price`/`qty` on non-`snapshot` events), dedupes on
+  `(instrument, seq_no)`, derives `event_date` from `timestamp`, and `MERGE INTO`s the result into
+  `orderbook.silver.book_events` — rerunning it never inserts an `(instrument, seq_no)` already
+  present in silver. Aborts before the merge if more than half the batch is dropped as malformed
+  (`BuildSilverEvents.checkQuality`).
+
+  ```sh
+  sbt "runMain example.BuildSilverEvents"
+  # or:
+  make spark-build-silver-events
+  ```
+
 ## Configuration notes
 
 Polaris is configured for **local/demo use only** — see the `polaris` service environment in

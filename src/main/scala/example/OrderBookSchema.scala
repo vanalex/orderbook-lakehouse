@@ -35,4 +35,14 @@ object OrderBookSchema {
       StructField("seq_no", LongType, nullable = false)
     )
   )
+
+  /** Silver schema for `orderbook.silver.book_events`: bronze's columns
+    * (validated by `BuildSilverEvents`, malformed rows dropped, deduped on
+    * `(instrument, seq_no)`) plus `event_date`, derived from `timestamp` and
+    * used, together with `instrument`, as the table's partition columns
+    * (Phase 1's medallion layout).
+    */
+  val silverBookEvents: StructType = StructType(
+    bronzeRawEvents.fields :+ StructField("event_date", DateType, nullable = false)
+  )
 }

@@ -37,7 +37,7 @@ endef
 
 .PHONY: help token health catalogs catalog catalog-roles \
         principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
-        spark-smoke-test spark-create-bronze-table
+        spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -88,3 +88,11 @@ spark-smoke-test: ## End-to-end table write/read check via Spark (example.SmokeT
 spark-create-bronze-table: ## Create orderbook.bronze.raw_events via Spark (example.CreateBronzeTable); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.CreateBronzeTable"
+
+spark-create-silver-table: ## Create orderbook.silver.book_events via Spark (example.CreateSilverTable); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.CreateSilverTable"
+
+spark-build-silver-events: ## Clean bronze events and merge into silver (example.BuildSilverEvents); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.BuildSilverEvents"
