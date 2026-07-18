@@ -45,4 +45,42 @@ object OrderBookSchema {
   val silverBookEvents: StructType = StructType(
     bronzeRawEvents.fields :+ StructField("event_date", DateType, nullable = false)
   )
+
+  /** Gold schema for `orderbook.gold.ohlcv_bars_1m`: one-minute OHLCV bars per
+    * instrument, derived from silver `trade` events (Phase 5).
+    */
+  val ohlcvBars1m: StructType = StructType(
+    Seq(
+      StructField("instrument", StringType, nullable = false),
+      StructField("window_start", TimestampType, nullable = false),
+      StructField("event_date", DateType, nullable = false),
+      StructField("open", DoubleType, nullable = false),
+      StructField("high", DoubleType, nullable = false),
+      StructField("low", DoubleType, nullable = false),
+      StructField("close", DoubleType, nullable = false),
+      StructField("volume", DoubleType, nullable = false)
+    )
+  )
+
+  /** Gold schema for `orderbook.gold.top_of_book_snapshots`: best bid/ask per
+    * instrument, sampled every minute (Phase 5). Reconstructed from a running
+    * per-`(instrument, side, price)` level book built off silver `add`/
+    * `cancel`/`trade` events — `add` adds qty, `cancel`/`trade` subtract it.
+    * `modify` isn't netted into level totals: its row carries the order's new
+    * absolute qty, not a delta, and with no `order_id` to track individual
+    * orders across events there's no way to recover what changed. `best_bid_*`
+    * / `best_ask_*` are null for a window with no resting liquidity on that
+    * side.
+    */
+  val topOfBookSnapshots: StructType = StructType(
+    Seq(
+      StructField("instrument", StringType, nullable = false),
+      StructField("window_start", TimestampType, nullable = false),
+      StructField("event_date", DateType, nullable = false),
+      StructField("best_bid_price", DoubleType, nullable = true),
+      StructField("best_bid_qty", DoubleType, nullable = true),
+      StructField("best_ask_price", DoubleType, nullable = true),
+      StructField("best_ask_qty", DoubleType, nullable = true)
+    )
+  )
 }

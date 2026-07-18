@@ -37,7 +37,8 @@ endef
 
 .PHONY: help token health catalogs catalog catalog-roles \
         principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
-        spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events
+        spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
+        spark-create-gold-tables spark-build-gold-aggregates
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -96,3 +97,11 @@ spark-create-silver-table: ## Create orderbook.silver.book_events via Spark (exa
 spark-build-silver-events: ## Clean bronze events and merge into silver (example.BuildSilverEvents); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.BuildSilverEvents"
+
+spark-create-gold-tables: ## Create orderbook.gold.* tables via Spark (example.CreateGoldTables); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.CreateGoldTables"
+
+spark-build-gold-aggregates: ## Build OHLCV bars + top-of-book snapshots into gold (example.BuildGoldAggregates); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.BuildGoldAggregates"

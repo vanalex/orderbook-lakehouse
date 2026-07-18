@@ -218,6 +218,33 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   make spark-build-silver-events
   ```
 
+- **`example.CreateGoldTables`** — creates `orderbook.gold.ohlcv_bars_1m` and
+  `orderbook.gold.top_of_book_snapshots` with the schemas from `OrderBookSchema`, partitioned by
+  `event_date`. Rerunnable (`createOrReplace`).
+
+  ```sh
+  sbt "runMain example.CreateGoldTables"
+  # or:
+  make spark-create-gold-tables
+  ```
+
+- **`example.BuildGoldAggregates`** — Gold transform (Phase 5 of `data_pipeline_plan.md`): reads
+  `orderbook.silver.book_events` and writes two aggregates. `ohlcvBars` builds one-minute OHLCV
+  bars per instrument from `trade` events. `topOfBookSnapshots` reconstructs a running
+  per-`(instrument, side, price)` level book from `add`/`cancel`/`trade` events (`add` adds qty,
+  `cancel`/`trade` subtract it) and samples the best bid/ask every minute, forward-filling a
+  level's qty into windows where it isn't touched. `modify` events aren't netted into level
+  totals — their row carries the order's new absolute qty, not a delta, and there's no
+  `order_id` in the schema to track an individual order across events, so there's no way to
+  recover what changed. Each run recomputes the full aggregate and dynamically overwrites the
+  `event_date` partitions it touches, so reruns over the same silver data are idempotent.
+
+  ```sh
+  sbt "runMain example.BuildGoldAggregates"
+  # or:
+  make spark-build-gold-aggregates
+  ```
+
 ## Configuration notes
 
 Polaris is configured for **local/demo use only** — see the `polaris` service environment in
