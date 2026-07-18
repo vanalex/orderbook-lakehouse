@@ -204,23 +204,35 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   make spark-create-silver-table
   ```
 
+- **`example.Watermark`** — not a job, but the incrementality primitive every gold/silver
+  transform builds on (Phase 6 of `data_pipeline_plan.md`): records "last upstream snapshot id
+  processed" as an Iceberg table property on the sink table (`pipeline.watermark.<name>`), so a
+  job can read only the source rows appended since its last run
+  (`spark.read.format("iceberg").option("start-snapshot-id", ...).option("end-snapshot-id", ...)`)
+  instead of rescanning full history every time. Falls back to a full read when no watermark is
+  recorded yet (first run).
+
 - **`example.BuildSilverEvents`** — Silver transform (Phase 4 of `data_pipeline_plan.md`): reads
   `orderbook.bronze.raw_events`, drops malformed rows (unknown `event_type`, missing required
   fields, an invalid `side`, or a missing `price`/`qty` on non-`snapshot` events), dedupes on
   `(instrument, seq_no)`, derives `event_date` from `timestamp`, and `MERGE INTO`s the result into
   `orderbook.silver.book_events` — rerunning it never inserts an `(instrument, seq_no)` already
   present in silver. Aborts before the merge if more than half the batch is dropped as malformed
-  (`BuildSilverEvents.checkQuality`).
+  (`BuildSilverEvents.checkQuality`). Incremental (Phase 6): only reads bronze rows appended since
+  the last run, via `Watermark` recorded on the silver table.
 
   ```sh
   sbt "runMain example.BuildSilverEvents"
   # or:
   make spark-build-silver-events
+  # or, as part of a full pipeline run:
+  make silver
   ```
 
 - **`example.CreateGoldTables`** — creates `orderbook.gold.ohlcv_bars_1m` and
-  `orderbook.gold.top_of_book_snapshots` with the schemas from `OrderBookSchema`, partitioned by
-  `event_date`. Rerunnable (`createOrReplace`).
+  `orderbook.gold.top_of_book_snapshots` (partitioned by `event_date`), plus
+  `orderbook.gold.book_state` (unpartitioned running-book state, Phase 6), with the schemas from
+  `OrderBookSchema`. Rerunnable (`createOrReplace`).
 
   ```sh
   sbt "runMain example.CreateGoldTables"
@@ -236,13 +248,32 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   level's qty into windows where it isn't touched. `modify` events aren't netted into level
   totals — their row carries the order's new absolute qty, not a delta, and there's no
   `order_id` in the schema to track an individual order across events, so there's no way to
-  recover what changed. Each run recomputes the full aggregate and dynamically overwrites the
-  `event_date` partitions it touches, so reruns over the same silver data are idempotent.
+  recover what changed.
+
+  Incremental (Phase 6): only reads silver rows appended since the last run, via `Watermark`
+  recorded on the OHLCV table, and appends the new bars/snapshots rather than recomputing and
+  overwriting the whole table. Top-of-book state carries forward across runs through
+  `orderbook.gold.book_state`, so a resting order posted in an earlier batch still counts toward
+  later batches' top of book. This assumes each run covers a complete batch of new data — if a
+  1-minute window's events happened to arrive split across two separate runs, each run would
+  append its own partial bar/snapshot for that window instead of merging into one, which is an
+  accepted limitation for this batch-oriented pipeline rather than something engineered around
+  (see `data_pipeline_plan.md` Phase 6).
 
   ```sh
   sbt "runMain example.BuildGoldAggregates"
   # or:
   make spark-build-gold-aggregates
+  # or, as part of a full pipeline run:
+  make gold
+  ```
+
+- **Pipeline-stage aliases** (Phase 6) — `make ingest`, `make silver`, `make gold` wrap
+  `example.IngestRawEvents`, `example.BuildSilverEvents`, `example.BuildGoldAggregates`
+  respectively, so a full incremental run of the pipeline is:
+
+  ```sh
+  make ingest && make silver && make gold
   ```
 
 ## Configuration notes

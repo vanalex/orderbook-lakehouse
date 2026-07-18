@@ -9,6 +9,11 @@ import org.apache.spark.sql.functions._
   * silver — safe to rerun, since `MERGE INTO` only inserts events not
   * already present in the target.
   *
+  * Incremental (Phase 6): only reads bronze rows appended since the last run
+  * (tracked via `Watermark` as a property on the silver table), instead of
+  * rescanning all of bronze every time. Falls back to a full read on the
+  * first run, when no watermark is recorded yet.
+  *
   * Run with: sbt "runMain example.BuildSilverEvents"
   */
 object BuildSilverEvents {
@@ -59,28 +64,52 @@ object BuildSilverEvents {
     )
   }
 
+  private val WatermarkName = "bronze_snapshot_id"
+
   def main(args: Array[String]): Unit = {
     val spark   = PolarisSpark.session("orderbook-build-silver-events")
     val catalog = PolarisSpark.catalogName
     val bronzeTable = s"$catalog.bronze.raw_events"
     val silverTable = s"$catalog.silver.book_events"
 
-    val bronze  = spark.table(bronzeTable)
-    val cleaned = clean(bronze).cache()
+    val current   = Watermark.currentSnapshotId(spark, bronzeTable)
+    val watermark = Watermark.get(spark, silverTable, WatermarkName)
 
-    val bronzeCount = bronze.count()
-    val cleanCount   = cleaned.count()
-    checkQuality(bronzeCount, cleanCount)
+    if (current.isEmpty) {
+      println(s"BuildSilverEvents: $bronzeTable has no data yet — nothing to do")
+    } else if (watermark == current) {
+      println(s"BuildSilverEvents: no new bronze snapshots since watermark ${current.get} — nothing to do")
+    } else {
+      val bronze = watermark match {
+        case Some(w) =>
+          spark.read
+            .format("iceberg")
+            .option("start-snapshot-id", w)
+            .option("end-snapshot-id", current.get)
+            .load(bronzeTable)
+        case None =>
+          spark.table(bronzeTable)
+      }
+      val cleaned = clean(bronze).cache()
 
-    cleaned.createOrReplaceTempView("silver_staged_events")
-    spark.sql(s"""
-      MERGE INTO $silverTable AS target
-      USING silver_staged_events AS source
-      ON target.instrument = source.instrument AND target.seq_no = source.seq_no
-      WHEN NOT MATCHED THEN INSERT *
-    """)
+      val bronzeCount = bronze.count()
+      val cleanCount  = cleaned.count()
+      checkQuality(bronzeCount, cleanCount)
 
-    println(s"Merged $cleanCount of $bronzeCount bronze events into $silverTable")
+      cleaned.createOrReplaceTempView("silver_staged_events")
+      spark.sql(s"""
+        MERGE INTO $silverTable AS target
+        USING silver_staged_events AS source
+        ON target.instrument = source.instrument AND target.seq_no = source.seq_no
+        WHEN NOT MATCHED THEN INSERT *
+      """)
+
+      Watermark.set(spark, silverTable, WatermarkName, current.get)
+      println(
+        s"Merged $cleanCount of $bronzeCount new bronze events (through snapshot ${current.get}) into $silverTable"
+      )
+    }
+
     spark.stop()
   }
 }

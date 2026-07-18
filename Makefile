@@ -38,7 +38,8 @@ endef
 .PHONY: help token health catalogs catalog catalog-roles \
         principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
-        spark-create-gold-tables spark-build-gold-aggregates
+        spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
+        ingest silver gold
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -90,6 +91,10 @@ spark-create-bronze-table: ## Create orderbook.bronze.raw_events via Spark (exam
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.CreateBronzeTable"
 
+spark-ingest-raw-events: ## Append SOURCE_PATH's raw feed files into bronze (example.IngestRawEvents); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.IngestRawEvents"
+
 spark-create-silver-table: ## Create orderbook.silver.book_events via Spark (example.CreateSilverTable); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.CreateSilverTable"
@@ -105,3 +110,15 @@ spark-create-gold-tables: ## Create orderbook.gold.* tables via Spark (example.C
 spark-build-gold-aggregates: ## Build OHLCV bars + top-of-book snapshots into gold (example.BuildGoldAggregates); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.BuildGoldAggregates"
+
+# ------------------------------------------------------------------
+# Phase 6: pipeline-stage aliases. Each wraps the incremental job for
+# its stage (ingest -> silver -> gold), so a full run is just:
+#   make ingest && make silver && make gold
+# ------------------------------------------------------------------
+
+ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
+
+silver: spark-build-silver-events ## Alias for spark-build-silver-events
+
+gold: spark-build-gold-aggregates ## Alias for spark-build-gold-aggregates

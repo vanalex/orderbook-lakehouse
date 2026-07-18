@@ -83,4 +83,22 @@ object OrderBookSchema {
       StructField("best_ask_qty", DoubleType, nullable = true)
     )
   )
+
+  /** State table for the running per-price-level book that
+    * `BuildGoldAggregates.topOfBookSnapshots` carries across runs (Phase 6):
+    * current `qty` for every `(instrument, side, price)` level as of the
+    * last processed silver snapshot. Persisting this means a resting order
+    * posted in an earlier incremental batch still counts toward the top of
+    * book in later batches, without re-reading all of silver's history on
+    * every run. Unpartitioned — small, single-row-per-level state, not an
+    * append-oriented event table.
+    */
+  val bookState: StructType = StructType(
+    Seq(
+      StructField("instrument", StringType, nullable = false),
+      StructField("side", StringType, nullable = false),
+      StructField("price", DoubleType, nullable = false),
+      StructField("qty", DoubleType, nullable = false)
+    )
+  )
 }

@@ -21,6 +21,12 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
   private def silver(rows: Row*) =
     spark.createDataFrame(spark.sparkContext.parallelize(rows), OrderBookSchema.silverBookEvents)
 
+  private def emptyState =
+    spark.createDataFrame(spark.sparkContext.emptyRDD[Row], OrderBookSchema.bookState)
+
+  private def state(rows: Row*) =
+    spark.createDataFrame(spark.sparkContext.parallelize(rows), OrderBookSchema.bookState)
+
   private def row(
     eventType: String,
     instrument: String,
@@ -77,11 +83,12 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
     assertEquals(BuildGoldAggregates.ohlcvBars(df).count(), 0L)
   }
 
-  // ---- topOfBookSnapshots ----
+  // ---- topOfBookSnapshots (single batch, no prior state) ----
 
   test("topOfBookSnapshots reports the best bid from a single resting add") {
     val df = silver(row("add", "BTC-USD", minute0, "buy", 100.0, 5.0, 1L))
-    val snap = BuildGoldAggregates.topOfBookSnapshots(df).collect().head
+    val (snaps, _) = BuildGoldAggregates.topOfBookSnapshots(df, emptyState)
+    val snap = snaps.collect().head
 
     assertEquals(snap.getAs[Double]("best_bid_price"), 100.0)
     assertEquals(snap.getAs[Double]("best_bid_qty"), 5.0)
@@ -95,7 +102,8 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
       row("add", "BTC-USD", minute0, "sell", 102.0, 3.0, 3L),
       row("add", "BTC-USD", minute0, "sell", 101.0, 4.0, 4L)
     )
-    val snap = BuildGoldAggregates.topOfBookSnapshots(df).collect().head
+    val (snaps, _) = BuildGoldAggregates.topOfBookSnapshots(df, emptyState)
+    val snap = snaps.collect().head
 
     assertEquals(snap.getAs[Double]("best_bid_price"), 100.0)
     assertEquals(snap.getAs[Double]("best_bid_qty"), 2.0)
@@ -108,8 +116,10 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
       row("add", "BTC-USD", minute0, "buy", 100.0, 5.0, 1L),
       row("cancel", "BTC-USD", minute0 + 1000L, "buy", 100.0, 5.0, 2L)
     )
-    val snap = BuildGoldAggregates.topOfBookSnapshots(df).collect().head
+    val (snaps, newState) = BuildGoldAggregates.topOfBookSnapshots(df, emptyState)
+    val snap = snaps.collect().head
     assert(snap.isNullAt(snap.fieldIndex("best_bid_price")))
+    assertEquals(newState.where("instrument = 'BTC-USD'").collect().head.getAs[Double]("qty"), 0.0)
   }
 
   test("topOfBookSnapshots nets a partial trade down but keeps the level resting") {
@@ -117,7 +127,8 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
       row("add", "BTC-USD", minute0, "sell", 100.0, 5.0, 1L),
       row("trade", "BTC-USD", minute0 + 1000L, "sell", 100.0, 2.0, 2L)
     )
-    val snap = BuildGoldAggregates.topOfBookSnapshots(df).collect().head
+    val (snaps, _) = BuildGoldAggregates.topOfBookSnapshots(df, emptyState)
+    val snap = snaps.collect().head
     assertEquals(snap.getAs[Double]("best_ask_price"), 100.0)
     assertEquals(snap.getAs[Double]("best_ask_qty"), 3.0)
   }
@@ -127,7 +138,8 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
       row("add", "BTC-USD", minute0, "buy", 100.0, 5.0, 1L),
       row("modify", "BTC-USD", minute0 + 1000L, "buy", 100.0, 999.0, 2L)
     )
-    val snap = BuildGoldAggregates.topOfBookSnapshots(df).collect().head
+    val (snaps, _) = BuildGoldAggregates.topOfBookSnapshots(df, emptyState)
+    val snap = snaps.collect().head
     assertEquals(snap.getAs[Double]("best_bid_qty"), 5.0)
   }
 
@@ -136,11 +148,55 @@ class BuildGoldAggregatesSpec extends munit.FunSuite {
       row("add", "BTC-USD", minute0, "buy", 100.0, 5.0, 1L),
       row("add", "BTC-USD", minute1, "sell", 200.0, 1.0, 2L)
     )
-    val snaps = BuildGoldAggregates.topOfBookSnapshots(df).collect().sortBy(_.getAs[Timestamp]("window_start"))
+    val (snaps, _) = BuildGoldAggregates.topOfBookSnapshots(df, emptyState)
+    val rows = snaps.collect().sortBy(_.getAs[Timestamp]("window_start"))
 
-    assertEquals(snaps.length, 2)
-    assertEquals(snaps(1).getAs[Double]("best_bid_price"), 100.0)
-    assertEquals(snaps(1).getAs[Double]("best_bid_qty"), 5.0)
-    assertEquals(snaps(1).getAs[Double]("best_ask_price"), 200.0)
+    assertEquals(rows.length, 2)
+    assertEquals(rows(1).getAs[Double]("best_bid_price"), 100.0)
+    assertEquals(rows(1).getAs[Double]("best_bid_qty"), 5.0)
+    assertEquals(rows(1).getAs[Double]("best_ask_price"), 200.0)
+  }
+
+  // ---- topOfBookSnapshots (incremental across batches, Phase 6) ----
+
+  test("topOfBookSnapshots carries a resting level forward from prior state into a new batch") {
+    val priorState = state(Row("BTC-USD", "buy", 100.0, 5.0))
+    // New batch: no new events for BTC-USD's buy side, just an unrelated sell add
+    // that opens a window for this instrument.
+    val df = silver(row("add", "BTC-USD", minute1, "sell", 200.0, 1.0, 1L))
+
+    val (snaps, newState) = BuildGoldAggregates.topOfBookSnapshots(df, priorState)
+    val snap = snaps.collect().head
+
+    assertEquals(snap.getAs[Double]("best_bid_price"), 100.0)
+    assertEquals(snap.getAs[Double]("best_bid_qty"), 5.0)
+    assertEquals(snap.getAs[Double]("best_ask_price"), 200.0)
+
+    val persistedBid = newState.where("instrument = 'BTC-USD' AND side = 'buy'").collect().head
+    assertEquals(persistedBid.getAs[Double]("qty"), 5.0)
+  }
+
+  test("topOfBookSnapshots nets a new batch's delta on top of prior state") {
+    val priorState = state(Row("BTC-USD", "sell", 100.0, 5.0))
+    val df = silver(row("trade", "BTC-USD", minute0, "sell", 100.0, 2.0, 1L))
+
+    val (snaps, newState) = BuildGoldAggregates.topOfBookSnapshots(df, priorState)
+    val snap = snaps.collect().head
+
+    assertEquals(snap.getAs[Double]("best_ask_qty"), 3.0)
+    assertEquals(newState.where("instrument = 'BTC-USD'").collect().head.getAs[Double]("qty"), 3.0)
+  }
+
+  test("topOfBookSnapshots persists state for levels untouched by the current batch") {
+    val priorState = state(Row("ETH-USD", "buy", 50.0, 10.0))
+    // This batch only has activity for BTC-USD; ETH-USD's level must survive
+    // into newState unchanged so a later batch still sees it.
+    val df = silver(row("add", "BTC-USD", minute0, "buy", 100.0, 1.0, 1L))
+
+    val (_, newState) = BuildGoldAggregates.topOfBookSnapshots(df, priorState)
+    val persisted = newState.where("instrument = 'ETH-USD'").collect()
+
+    assertEquals(persisted.length, 1)
+    assertEquals(persisted.head.getAs[Double]("qty"), 10.0)
   }
 }
