@@ -186,13 +186,50 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   `snapshot`) and the bronze `StructType` for `orderbook.bronze.raw_events` (append-only,
   minimal typing — silver is where types get validated/cast, per Phase 4).
 
-- **`example.CreateBronzeTable`** — creates `orderbook.bronze.raw_events` with the schema from
-  `OrderBookSchema`. Rerunnable (`createOrReplace`).
+- **`example.CreateBronzeTable`** — creates `orderbook.bronze.raw_events` and
+  `orderbook.bronze.ingested_files` (Phase 3's file-tracking table, see `IngestRawEvents` below)
+  with the schemas from `OrderBookSchema`. Rerunnable (`createOrReplace`).
 
   ```sh
   sbt "runMain example.CreateBronzeTable"
   # or:
   make spark-create-bronze-table
+  ```
+
+- **`example.GenerateSyntheticEvents`** — Phase 3's source for demo data: simulates a toy order
+  book per instrument (`add` pushes a resting order onto a list; `cancel`/`modify`/`trade` pick a
+  real resting order off that list, so the feed is internally consistent rather than pure random
+  noise) and writes the result to a landing path/format — it doesn't touch the Iceberg table
+  itself, the same as a historical replay dump wouldn't. Deterministic given a seed (default
+  `42L`) and a fixed epoch anchor, not wall-clock time.
+
+  ```sh
+  sbt "runMain example.GenerateSyntheticEvents [count] [instruments] [path] [format]"
+  # e.g.:
+  sbt "runMain example.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD data/raw_events json"
+  ```
+
+- **`example.IngestRawEvents`** — Bronze ingestion (Phase 3 of `data_pipeline_plan.md`): reads
+  raw feed files from `SOURCE_PATH`/`SOURCE_FORMAT` (or CLI args), conforms them to
+  `OrderBookSchema.bronzeRawEvents` (`conform`: keeps known columns, adds missing ones as null,
+  casts to bronze types — tolerant of extra/missing columns and source-specific typing), and
+  appends to `orderbook.bronze.raw_events`.
+
+  Tracks which source files it's already ingested in `orderbook.bronze.ingested_files` (one row
+  per file path, from Spark's `input_file_name()`), so a run only reads/appends files not already
+  recorded there (`IngestRawEvents.newFilesOnly`, a left-anti join against that table) — re-running
+  against a landing directory that keeps growing (e.g. another `GenerateSyntheticEvents` batch)
+  doesn't re-append files already ingested, and a run with nothing new reports "nothing to do".
+  This is file-level idempotency, on top of (not instead of) the row-level dedupe by
+  `(instrument, seq_no)` that still happens downstream in silver (Phase 4) — that dedupe remains
+  the correctness backstop for duplicate rows within or across files.
+
+  ```sh
+  sbt "runMain example.IngestRawEvents <path> [format]"
+  # or:
+  make spark-ingest-raw-events
+  # or, as part of a full pipeline run:
+  make ingest
   ```
 
 - **`example.CreateSilverTable`** — creates `orderbook.silver.book_events` with the schema from
@@ -276,6 +313,36 @@ Configuration lives in `build.sbt` (Scala 2.13.16, project `orderbook-lakehouse`
   make ingest && make silver && make gold
   ```
 
+- **`example.MaintainTables`** — Table maintenance (Phase 7 of `data_pipeline_plan.md`): runs
+  Iceberg's Spark maintenance procedures against every managed table (`bronze.raw_events`,
+  `silver.book_events`, `gold.ohlcv_bars_1m`, `gold.top_of_book_snapshots`, `gold.book_state`), in
+  the order Iceberg recommends — compact, then expire, then sweep orphans:
+
+  - `CALL orderbook.system.rewrite_data_files(table => '...')` — compacts the small files that
+    Phase 6's frequent incremental appends/merges produce.
+  - `CALL orderbook.system.expire_snapshots(table => '...', older_than => ..., retain_last => ...)`
+    — drops snapshots past a retention window (default 7 days, always keeping at least the most
+    recent one), bounding storage/metadata growth from those same commits.
+  - `CALL orderbook.system.remove_orphan_files(table => '...', older_than => ...)` — sweeps files
+    under the table's data directory that no live snapshot references (e.g. left behind by a
+    failed write), past a conservative default 3-day cutoff so files from an in-flight commit
+    aren't swept.
+
+  Retention windows are configurable via `MAINTENANCE_SNAPSHOT_RETENTION_HOURS` (default `168`),
+  `MAINTENANCE_RETAIN_LAST_SNAPSHOTS` (default `1`), and `MAINTENANCE_ORPHAN_FILE_RETENTION_HOURS`
+  (default `72`).
+
+  ```sh
+  sbt "runMain example.MaintainTables"
+  # or:
+  make spark-maintain-tables
+  # or:
+  make maintain
+  ```
+
+  No scheduler wired up yet, same as the Phase 6 pipeline jobs — run it by hand or cron it
+  externally.
+
 ## Configuration notes
 
 Polaris is configured for **local/demo use only** — see the `polaris` service environment in
@@ -315,3 +382,15 @@ worth knowing about if you touch this config:
 None of this affects how the Spark *client* talks to MinIO (that path already used path-style
 access via `s3.path-style-access=true`, set in `example.PolarisSpark`) — it's specifically about
 requests Polaris itself makes internally when committing a table.
+
+### Making `remove_orphan_files` work
+
+Iceberg's Spark maintenance actions (Phase 7, `example.MaintainTables`) read/write table data via
+`S3FileIO` like everything else — except `remove_orphan_files`, which lists the table's storage
+location using Hadoop's `FileSystem` API instead, and failed with
+`UnsupportedFileSystemException: No FileSystem for scheme "s3"` until `example.PolarisSpark` also
+registered a `FileSystem` for that scheme: the `hadoop-aws` dependency (pinned to the Hadoop
+version `spark-sql` already pulls in transitively) provides `S3AFileSystem`, wired up via
+`spark.hadoop.fs.s3.impl` and `fs.s3a.*` config pointed at the same MinIO endpoint/credentials as
+the `S3FileIO` config above. `rewrite_data_files` and `expire_snapshots` didn't need this — only
+the orphan-file sweep touches Hadoop's filesystem layer.

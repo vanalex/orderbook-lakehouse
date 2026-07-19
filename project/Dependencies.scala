@@ -18,4 +18,12 @@ object Dependencies {
     "org.apache.iceberg" % "iceberg-spark-runtime-3.5_2.13" % icebergVersion
   lazy val icebergAwsBundle =
     "org.apache.iceberg" % "iceberg-aws-bundle" % icebergVersion
+
+  // Hadoop's S3A FileSystem — Spark/Iceberg's S3FileIO (AWS SDK v2) handles
+  // table data reads/writes, but Iceberg's Spark maintenance action for
+  // orphan-file removal (`CALL ...system.remove_orphan_files`) lists the
+  // table's storage location via Hadoop's `FileSystem` API instead, which
+  // needs a registered filesystem for the `s3://` scheme. Version pinned to
+  // match the hadoop-client Spark 3.5.8 already brings in transitively.
+  lazy val hadoopAws = "org.apache.hadoop" % "hadoop-aws" % "3.3.4"
 }

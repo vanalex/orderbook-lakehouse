@@ -39,7 +39,8 @@ endef
         principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
         spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
-        ingest silver gold
+        spark-maintain-tables \
+        ingest silver gold maintain
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -111,6 +112,10 @@ spark-build-gold-aggregates: ## Build OHLCV bars + top-of-book snapshots into go
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain example.BuildGoldAggregates"
 
+spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on every managed table (example.MaintainTables); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.MaintainTables"
+
 # ------------------------------------------------------------------
 # Phase 6: pipeline-stage aliases. Each wraps the incremental job for
 # its stage (ingest -> silver -> gold), so a full run is just:
@@ -122,3 +127,5 @@ ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
 silver: spark-build-silver-events ## Alias for spark-build-silver-events
 
 gold: spark-build-gold-aggregates ## Alias for spark-build-gold-aggregates
+
+maintain: spark-maintain-tables ## Alias for spark-maintain-tables (Phase 7)

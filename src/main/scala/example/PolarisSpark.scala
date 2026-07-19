@@ -65,6 +65,17 @@ object PolarisSpark {
       .config(s"$cat.s3.access-key-id", minioAccess)
       .config(s"$cat.s3.secret-access-key", minioSecret)
       .config(s"$cat.client.region", awsRegion)
+      // Iceberg's own table reads/writes go through S3FileIO above, but its
+      // Spark maintenance actions (e.g. remove_orphan_files) list the
+      // table's storage location via Hadoop's `FileSystem` API instead, so
+      // that needs its own `s3://`-scheme filesystem registered — Hadoop's
+      // S3A connector, pointed at the same MinIO endpoint/credentials.
+      .config("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+      .config("spark.hadoop.fs.s3a.endpoint", minioEndpoint)
+      .config("spark.hadoop.fs.s3a.path.style.access", "true")
+      .config("spark.hadoop.fs.s3a.access.key", minioAccess)
+      .config("spark.hadoop.fs.s3a.secret.key", minioSecret)
+      .config("spark.hadoop.fs.s3a.connection.ssl.enabled", minioEndpoint.startsWith("https"))
       .getOrCreate()
   }
 }

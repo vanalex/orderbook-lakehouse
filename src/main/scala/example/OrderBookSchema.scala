@@ -84,6 +84,19 @@ object OrderBookSchema {
     )
   )
 
+  /** Tracks which source files `IngestRawEvents` has already appended to
+    * `orderbook.bronze.raw_events` (Phase 3), keyed by the file's path as
+    * Spark reports it (`input_file_name()`), so re-running against a
+    * growing landing directory only reads/appends files not already
+    * ingested. Unpartitioned, append-only — one row per ingested file.
+    */
+  val ingestedFiles: StructType = StructType(
+    Seq(
+      StructField("path", StringType, nullable = false),
+      StructField("ingested_at", TimestampType, nullable = false)
+    )
+  )
+
   /** State table for the running per-price-level book that
     * `BuildGoldAggregates.topOfBookSnapshots` carries across runs (Phase 6):
     * current `qty` for every `(instrument, side, price)` level as of the

@@ -33,6 +33,7 @@ lazy val root = (project in file("."))
       sparkSql,
       icebergSparkRuntime,
       icebergAwsBundle,
+      hadoopAws,
       munit % Test
     ),
     fork := true,
