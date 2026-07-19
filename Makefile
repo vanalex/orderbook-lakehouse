@@ -40,7 +40,10 @@ endef
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
         spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
         spark-maintain-tables \
-        ingest silver gold maintain
+        ingest silver gold maintain \
+        query-spread query-imbalance query-liquidity-dry-up query-realized-vol \
+        query-parkinson-vol query-vwap query-cancel-add-ratio query-trade-through \
+        query-effective-spread
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -129,3 +132,43 @@ silver: spark-build-silver-events ## Alias for spark-build-silver-events
 gold: spark-build-gold-aggregates ## Alias for spark-build-gold-aggregates
 
 maintain: spark-maintain-tables ## Alias for spark-maintain-tables (Phase 7)
+
+# ------------------------------------------------------------------
+# Ad-hoc analytical queries against gold/silver, one Spark job each.
+# ------------------------------------------------------------------
+
+query-spread: ## Bid-ask spread over time (example.SpreadOverTime); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.SpreadOverTime"
+
+query-imbalance: ## Book imbalance vs. next bar's return (example.BookImbalanceVsNextBar); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.BookImbalanceVsNextBar"
+
+query-liquidity-dry-up: ## Liquidity dry-up windows (example.LiquidityDryUpWindows); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.LiquidityDryUpWindows"
+
+query-realized-vol: ## Rolling realized volatility (example.RealizedVolatility); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.RealizedVolatility"
+
+query-parkinson-vol: ## Parkinson range volatility (example.ParkinsonVolatility); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.ParkinsonVolatility"
+
+query-vwap: ## Daily VWAP vs. average close (example.VwapVsClose); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.VwapVsClose"
+
+query-cancel-add-ratio: ## Cancel-to-add ratio (example.CancelToAddRatio); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.CancelToAddRatio"
+
+query-trade-through: ## Trade-through detection (example.TradeThroughDetection); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.TradeThroughDetection"
+
+query-effective-spread: ## Effective vs. quoted spread (example.EffectiveVsQuotedSpread); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 sbt -batch "runMain example.EffectiveVsQuotedSpread"
