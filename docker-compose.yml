@@ -1,86 +1,120 @@
-version: "3.8"
+# Polaris server and admin tool must run the same version: the admin tool
+# creates the metastore schema the server expects.
+x-polaris-db: &polaris-db
+  POLARIS_PERSISTENCE_TYPE: relational-jdbc
+  POLARIS_PERSISTENCE_RELATIONAL_JDBC_DATABASE_TYPE: postgresql
+  QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/polaris
+  QUARKUS_DATASOURCE_USERNAME: polaris
+  QUARKUS_DATASOURCE_PASSWORD: polaris
 
 services:
   # ------------------------------------------------------------------
-  # MinIO — S3-compatible object storage backing the Iceberg warehouse
+  # SeaweedFS — S3-compatible object storage backing the Iceberg warehouse
   # ------------------------------------------------------------------
-  minio:
-    image: minio/minio:latest
-    container_name: minio
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    container_name: seaweedfs
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console
+      - "8333:8333"     # S3 API
+      - "23646:23646"   # Admin UI
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: password
-      # Lets MinIO recognize virtual-hosted-style requests (<bucket>.minio).
-      # Polaris' own internal S3 client (used for server-side commit
-      # bookkeeping, separate from the path-style config Spark clients use)
-      # addresses buckets this way regardless of the catalog's
-      # pathStyleAccess setting.
-      MINIO_DOMAIN: minio
-    command: server /data --console-address ":9001"
+      # `weed mini` creates an S3 identity from these and pre-creates the
+      # bucket on startup, so no separate bucket-init container is needed.
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      S3_BUCKET: orderbook-warehouse
+    command:
+      - mini
+      - -dir=/data
+      # Stable identity across container restarts (defaults to the container IP).
+      - -ip=seaweedfs
+      # Lets SeaweedFS recognize virtual-hosted-style requests
+      # (<bucket>.seaweedfs). Polaris' own internal S3 client (used for
+      # server-side commit bookkeeping, separate from the path-style config
+      # Spark clients use) addresses buckets this way regardless of the
+      # catalog's pathStyleAccess setting.
+      - -s3.domainName=seaweedfs
+      # mini also starts its own Iceberg REST catalog and WebDAV gateway;
+      # Polaris is the catalog here, so turn those off.
+      - -s3.port.iceberg=0
+      - -webdav=false
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     networks:
       default:
         aliases:
           # Resolves the virtual-hosted-style host Polaris builds for the
           # 'orderbook-warehouse' bucket back to this container.
-          - orderbook-warehouse.minio
+          - orderbook-warehouse.seaweedfs
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8333/healthz || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 20
 
   # ------------------------------------------------------------------
-  # One-shot init container: creates the warehouse bucket
+  # Postgres — Polaris metastore (catalogs, namespaces, tables, principals)
   # ------------------------------------------------------------------
-  minio-init:
-    image: minio/mc:latest
-    container_name: minio-init
+  postgres:
+    image: postgres:17.10-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: polaris
+      POSTGRES_USER: polaris
+      POSTGRES_PASSWORD: polaris
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Polaris doesn't create its schema itself; this runs on first init only.
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polaris -d polaris"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------------------------------------------
+  # One-shot init container: bootstraps the Polaris realm + root principal
+  # in Postgres. Idempotent — a no-op once the realm exists.
+  # ------------------------------------------------------------------
+  polaris-bootstrap:
+    image: apache/polaris-admin-tool:1.8.0
+    container_name: polaris-bootstrap
+    environment:
+      <<: *polaris-db
+    command: ["bootstrap", "--realm=default-realm", "--credential=default-realm,root,s3cr3t"]
     depends_on:
-      minio:
+      postgres:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 admin password &&
-      mc mb --ignore-existing local/orderbook-warehouse &&
-      echo 'Bucket orderbook-warehouse ready'
-      "
 
   # ------------------------------------------------------------------
   # Apache Polaris — Iceberg REST catalog
   # ------------------------------------------------------------------
   polaris:
-    image: apache/polaris:latest
+    image: apache/polaris:1.8.0
     container_name: polaris
     ports:
       - "8181:8181"   # Catalog + management API
       - "8182:8182"   # Health/metrics
     environment:
-      # Fixed root credentials so the demo is reproducible
-      # (realm,clientId,clientSecret)
-      POLARIS_BOOTSTRAP_CREDENTIALS: "default-realm,root,s3cr3t"
-      # Credentials Polaris uses to talk to MinIO (S3FileIO)
+      <<: *polaris-db
+      # Credentials Polaris uses to talk to SeaweedFS (S3FileIO)
       AWS_ACCESS_KEY_ID: admin
       AWS_SECRET_ACCESS_KEY: password
       AWS_REGION: us-east-1
       # Without these, Polaris' internal S3/STS clients (used for
       # server-side commit/task bookkeeping, not just the client-facing
-      # catalog config) default to real AWS instead of MinIO, causing
+      # catalog config) default to real AWS instead of SeaweedFS, causing
       # spurious 403s ("Access Key Id does not exist") on table commits.
-      AWS_ENDPOINT_URL_S3: http://minio:9000
-      AWS_ENDPOINT_URL_STS: http://minio:9000
-      # In-memory metastore is fine for a demo (state lost on restart)
-      polaris.persistence.type: in-memory
+      AWS_ENDPOINT_URL_S3: http://seaweedfs:8333
+      AWS_ENDPOINT_URL_STS: http://seaweedfs:8333
       polaris.realm-context.realms: default-realm
-      # Allow non-AWS S3 endpoints (MinIO) without role assumption
+      # Allow non-AWS S3 endpoints (SeaweedFS) without role assumption
       polaris.features."SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION": "true"
       polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES": '["S3"]'
     depends_on:
-      minio-init:
+      seaweedfs:
+        condition: service_healthy
+      polaris-bootstrap:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8182/q/health || exit 1"]
@@ -92,7 +126,7 @@ services:
   # One-shot init container: creates the 'orderbook' catalog + grants
   # ------------------------------------------------------------------
   polaris-init:
-    image: curlimages/curl:latest
+    image: curlimages/curl:8.22.0
     container_name: polaris-init
     depends_on:
       polaris:
@@ -102,4 +136,5 @@ services:
     entrypoint: ["/bin/sh", "/setup.sh"]
 
 volumes:
-  minio-data:
+  seaweedfs-data:
+  postgres-data:

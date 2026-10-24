@@ -12,7 +12,7 @@ object Dependencies {
   lazy val sparkSql = "org.apache.spark" %% "spark-sql" % sparkVersion
 
   // Iceberg's Spark runtime (bundles iceberg-core/api) + AWS bundle, which
-  // provides S3FileIO for talking to MinIO. Matches the combo Polaris'
+  // provides S3FileIO for talking to SeaweedFS. Matches the combo Polaris'
   // own getting-started docs use for --packages.
   lazy val icebergSparkRuntime =
     "org.apache.iceberg" % "iceberg-spark-runtime-3.5_2.13" % icebergVersion

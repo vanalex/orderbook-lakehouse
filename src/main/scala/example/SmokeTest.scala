@@ -1,12 +1,12 @@
 package example
 
-/** End-to-end smoke test for the Spark <-> Polaris <-> MinIO wiring: creates
+/** End-to-end smoke test for the Spark <-> Polaris <-> SeaweedFS wiring: creates
   * a real Iceberg table, writes rows, reads them back, then drops the table.
   *
   * Unlike `CreateNamespaces` (metadata only), this exercises the full data
-  * path — Polaris' server-side commit bookkeeping and MinIO's S3 API — which
+  * path — Polaris' server-side commit bookkeeping and SeaweedFS's S3 API — which
   * is what actually needed the storage/network fixes documented in the
-  * README ("Making Polaris + MinIO actually work for table writes").
+  * README ("Setup notes").
   *
   * Run with: sbt "runMain example.SmokeTest"
   */
