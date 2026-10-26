@@ -1,0 +1,74 @@
+# Redpanda Connect pipeline: streams raw order-book events into a landing
+# prefix in SeaweedFS, where IngestRawEvents picks them up into
+# orderbook.bronze.raw_events (`make ingest-stream`).
+#
+# Producers POST to http://localhost:4195/events, one JSON event per line
+# (a single event, or a whole newline-delimited file such as a Spark JSON
+# part file). The request returns once the events are written to S3.
+#
+# Events are buffered and written as newline-delimited JSON files, one file
+# per batch, so bronze ingestion sees a few larger files rather than one
+# object per event. Lines that aren't valid JSON go to a separate rejected/
+# prefix instead: the bronze table has required columns, so a single
+# unparseable row would fail the whole Spark append.
+
+http:
+  address: 0.0.0.0:4195
+
+input:
+  http_server:
+    path: /events
+    allowed_verbs: [POST]
+
+pipeline:
+  processors:
+    - unarchive:
+        format: lines
+    # Blank lines are dropped; anything else must parse as JSON or the
+    # message is flagged as errored and routed to rejected/ below.
+    - mapping: |
+        root = if content().string().trim() == "" { deleted() } else { this }
+
+output:
+  switch:
+    cases:
+      - check: errored()
+        output:
+          processors:
+            - log:
+                level: WARN
+                message: 'rejected line: ${! error() }'
+          aws_s3:
+            bucket: ${S3_BUCKET:orderbook-warehouse}
+            path: landing/rejected/${! timestamp_unix_nano() }-${! uuid_v4() }.txt
+            content_type: text/plain
+            region: ${AWS_REGION:us-east-1}
+            endpoint: ${S3_ENDPOINT:http://seaweedfs:8333}
+            force_path_style_urls: true
+            credentials:
+              id: ${S3_ACCESS_KEY:admin}
+              secret: ${S3_SECRET_KEY:password}
+            batching:
+              count: 1000
+              period: 5s
+              processors:
+                - archive:
+                    format: lines
+
+      - output:
+          aws_s3:
+            bucket: ${S3_BUCKET:orderbook-warehouse}
+            path: landing/raw_events/${! timestamp_unix_nano() }-${! uuid_v4() }.json
+            content_type: application/x-ndjson
+            region: ${AWS_REGION:us-east-1}
+            endpoint: ${S3_ENDPOINT:http://seaweedfs:8333}
+            force_path_style_urls: true
+            credentials:
+              id: ${S3_ACCESS_KEY:admin}
+              secret: ${S3_SECRET_KEY:password}
+            batching:
+              count: 5000
+              period: 5s
+              processors:
+                - archive:
+                    format: lines

@@ -53,6 +53,25 @@ cancels and trades hit orders that actually exist. The same seed always gives th
 
 Full run: `make ingest && make silver && make gold`.
 
+### Streaming into bronze (Redpanda Connect)
+
+The `redpanda-connect` service (`redpanda-connect/landing.yaml`) accepts events over HTTP and
+writes them to `s3://orderbook-warehouse/landing/raw_events/` as newline-delimited JSON files,
+one file per batch (up to 5000 events or 5s). `make ingest-stream` then runs `IngestRawEvents`
+against that prefix, so silver and gold don't change.
+
+```sh
+curl --data-binary '{"event_type":"add","instrument":"BTC-USD","timestamp":"2026-10-26T10:00:00Z","side":"buy","price":100.5,"qty":3,"seq_no":1}' \
+  http://localhost:4195/events
+make stream-send                 # or replay GenerateSyntheticEvents output from data/raw_events
+make ingest-stream && make silver && make gold
+```
+
+A request body can hold one event or many, one per line. The request returns once the events
+are written to S3. Lines that aren't valid JSON go to `landing/rejected/` instead, because one
+unparseable row would make the bronze append fail. Delivery is at least once; silver's dedupe on
+`(instrument, seq_no)` removes any duplicates.
+
 ### Design points
 
 - **Incremental processing** (`Watermark.scala`): each job saves the last upstream Iceberg

@@ -40,7 +40,7 @@ endef
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
         spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
         spark-maintain-tables \
-        ingest silver gold maintain \
+        ingest silver gold maintain stream-send ingest-stream \
         query-spread query-imbalance query-liquidity-dry-up query-realized-vol \
         query-parkinson-vol query-vwap query-cancel-add-ratio query-trade-through \
         query-effective-spread
@@ -126,6 +126,27 @@ spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on 
 # ------------------------------------------------------------------
 
 ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
+
+# ------------------------------------------------------------------
+# Streaming landing via Redpanda Connect (redpanda-connect/landing.yaml):
+# events POSTed to the connect service land as JSON files under
+# STREAM_LANDING, and ingest-stream appends them to bronze like any
+# other landing directory.
+# ------------------------------------------------------------------
+
+STREAM_URL     ?= http://localhost:4195/events
+STREAM_LANDING ?= s3://orderbook-warehouse/landing/raw_events
+STREAM_SOURCE  ?= data/raw_events
+
+stream-send: ## POST local JSON event files to Redpanda Connect (STREAM_SOURCE=data/raw_events)
+	@find $(STREAM_SOURCE) -name '*.json' | while read -r f; do \
+	  curl -sf --data-binary @"$$f" $(STREAM_URL) || { echo "Failed to send $$f" >&2; exit 1; }; \
+	  echo "Sent $$f"; \
+	done
+
+ingest-stream: ## Append Redpanda Connect's landed files into bronze (example.IngestRawEvents); loads .env if present
+	@set -a; [ -f .env ] && . ./.env || true; set +a; \
+	 SOURCE_PATH=$(STREAM_LANDING) SOURCE_FORMAT=json sbt -batch "runMain example.IngestRawEvents"
 
 silver: spark-build-silver-events ## Alias for spark-build-silver-events
 

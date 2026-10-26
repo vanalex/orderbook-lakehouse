@@ -135,6 +135,29 @@ services:
       - ./polaris-setup.sh:/setup.sh:ro
     entrypoint: ["/bin/sh", "/setup.sh"]
 
+  # ------------------------------------------------------------------
+  # Redpanda Connect — streams POSTed events into s3://orderbook-warehouse/
+  # landing/raw_events/ as newline-delimited JSON files, for
+  # IngestRawEvents to append into bronze (redpanda-connect/landing.yaml)
+  # ------------------------------------------------------------------
+  redpanda-connect:
+    image: redpandadata/connect:4.113.0
+    container_name: redpanda-connect
+    ports:
+      - "4195:4195"   # POST /events; also /ready, /ping, /metrics
+    environment:
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_BUCKET: orderbook-warehouse
+      S3_ACCESS_KEY: admin
+      S3_SECRET_KEY: password
+      AWS_REGION: us-east-1
+    command: ["run", "/landing.yaml"]
+    volumes:
+      - ./redpanda-connect/landing.yaml:/landing.yaml:ro
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
 volumes:
   seaweedfs-data:
   postgres-data:
