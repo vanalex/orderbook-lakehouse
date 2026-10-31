@@ -53,6 +53,18 @@ cancels and trades hit orders that actually exist. The same seed always gives th
 
 Full run: `make ingest && make silver && make gold`.
 
+The Scala packages under `src/main/scala/orderbook/` follow the same layers:
+
+| Package | Contents |
+|---|---|
+| `common` | `PolarisSpark` (Spark session wired to Polaris + SeaweedFS), `OrderBookSchema`, `Watermark` |
+| `bronze` / `silver` / `gold` | Each layer's `Create*Table(s)` job and the job that writes it |
+| `analytics` | Read-only query jobs (see [Analytics](#analytics)) |
+| `ops` | `CreateNamespaces`, `MaintainTables`, `SmokeTest`, `ListCatalogs` |
+| `tools` | `GenerateSyntheticEvents` |
+
+Tests mirror the same packages under `src/test/scala/orderbook/`.
+
 ### Streaming into bronze (Redpanda Connect)
 
 The `redpanda-connect` service (`infra/redpanda-connect/landing.yaml`) accepts events over HTTP and
@@ -93,7 +105,6 @@ Standalone query jobs, each answering one trading question:
 - **Microstructure signals:** `BookImbalanceVsNextBar` (does bid/ask imbalance predict the next
   bar's direction?), `LiquidityDryUpWindows`, `TradeThroughDetection`
 - **Surveillance:** `CancelToAddRatio`, a classic warning sign for spoofing or quote-stuffing
-- `VerifyCounts` checks row counts.
 
 Several of these join trades against the snapshot from the previous minute, so the results are
 approximate. The code says so.

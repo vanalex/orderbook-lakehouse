@@ -79,45 +79,45 @@ tables: ## List tables in a namespace (CATALOG=orderbook NAMESPACE=bronze)
 	fi
 	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces/$(NAMESPACE)/tables)
 
-scala-catalogs: ## List catalogs via the Scala job (example.ListCatalogs); loads .env if present
+scala-catalogs: ## List catalogs via the Scala job (orderbook.ops.ListCatalogs); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.ListCatalogs"
+	 sbt -batch "runMain orderbook.ops.ListCatalogs"
 
-spark-init-namespaces: ## Create bronze/silver/gold namespaces via Spark (example.CreateNamespaces); loads .env if present
+spark-init-namespaces: ## Create bronze/silver/gold namespaces via Spark (orderbook.ops.CreateNamespaces); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.CreateNamespaces"
+	 sbt -batch "runMain orderbook.ops.CreateNamespaces"
 
-spark-smoke-test: ## End-to-end table write/read check via Spark (example.SmokeTest); loads .env if present
+spark-smoke-test: ## End-to-end table write/read check via Spark (orderbook.ops.SmokeTest); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.SmokeTest"
+	 sbt -batch "runMain orderbook.ops.SmokeTest"
 
-spark-create-bronze-table: ## Create orderbook.bronze.raw_events via Spark (example.CreateBronzeTable); loads .env if present
+spark-create-bronze-table: ## Create orderbook.bronze.raw_events via Spark (orderbook.bronze.CreateBronzeTable); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.CreateBronzeTable"
+	 sbt -batch "runMain orderbook.bronze.CreateBronzeTable"
 
-spark-ingest-raw-events: ## Append SOURCE_PATH's raw feed files into bronze (example.IngestRawEvents); loads .env if present
+spark-ingest-raw-events: ## Append SOURCE_PATH's raw feed files into bronze (orderbook.bronze.IngestRawEvents); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.IngestRawEvents"
+	 sbt -batch "runMain orderbook.bronze.IngestRawEvents"
 
-spark-create-silver-table: ## Create orderbook.silver.book_events via Spark (example.CreateSilverTable); loads .env if present
+spark-create-silver-table: ## Create orderbook.silver.book_events via Spark (orderbook.silver.CreateSilverTable); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.CreateSilverTable"
+	 sbt -batch "runMain orderbook.silver.CreateSilverTable"
 
-spark-build-silver-events: ## Clean bronze events and merge into silver (example.BuildSilverEvents); loads .env if present
+spark-build-silver-events: ## Clean bronze events and merge into silver (orderbook.silver.BuildSilverEvents); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.BuildSilverEvents"
+	 sbt -batch "runMain orderbook.silver.BuildSilverEvents"
 
-spark-create-gold-tables: ## Create orderbook.gold.* tables via Spark (example.CreateGoldTables); loads .env if present
+spark-create-gold-tables: ## Create orderbook.gold.* tables via Spark (orderbook.gold.CreateGoldTables); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.CreateGoldTables"
+	 sbt -batch "runMain orderbook.gold.CreateGoldTables"
 
-spark-build-gold-aggregates: ## Build OHLCV bars + top-of-book snapshots into gold (example.BuildGoldAggregates); loads .env if present
+spark-build-gold-aggregates: ## Build OHLCV bars + top-of-book snapshots into gold (orderbook.gold.BuildGoldAggregates); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.BuildGoldAggregates"
+	 sbt -batch "runMain orderbook.gold.BuildGoldAggregates"
 
-spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on every managed table (example.MaintainTables); loads .env if present
+spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on every managed table (orderbook.ops.MaintainTables); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.MaintainTables"
+	 sbt -batch "runMain orderbook.ops.MaintainTables"
 
 # ------------------------------------------------------------------
 # Phase 6: pipeline-stage aliases. Each wraps the incremental job for
@@ -144,9 +144,9 @@ stream-send: ## POST local JSON event files to Redpanda Connect (STREAM_SOURCE=d
 	  echo "Sent $$f"; \
 	done
 
-ingest-stream: ## Append Redpanda Connect's landed files into bronze (example.IngestRawEvents); loads .env if present
+ingest-stream: ## Append Redpanda Connect's landed files into bronze (orderbook.bronze.IngestRawEvents); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 SOURCE_PATH=$(STREAM_LANDING) SOURCE_FORMAT=json sbt -batch "runMain example.IngestRawEvents"
+	 SOURCE_PATH=$(STREAM_LANDING) SOURCE_FORMAT=json sbt -batch "runMain orderbook.bronze.IngestRawEvents"
 
 silver: spark-build-silver-events ## Alias for spark-build-silver-events
 
@@ -158,38 +158,38 @@ maintain: spark-maintain-tables ## Alias for spark-maintain-tables (Phase 7)
 # Ad-hoc analytical queries against gold/silver, one Spark job each.
 # ------------------------------------------------------------------
 
-query-spread: ## Bid-ask spread over time (example.SpreadOverTime); loads .env if present
+query-spread: ## Bid-ask spread over time (orderbook.analytics.SpreadOverTime); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.SpreadOverTime"
+	 sbt -batch "runMain orderbook.analytics.SpreadOverTime"
 
-query-imbalance: ## Book imbalance vs. next bar's return (example.BookImbalanceVsNextBar); loads .env if present
+query-imbalance: ## Book imbalance vs. next bar's return (orderbook.analytics.BookImbalanceVsNextBar); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.BookImbalanceVsNextBar"
+	 sbt -batch "runMain orderbook.analytics.BookImbalanceVsNextBar"
 
-query-liquidity-dry-up: ## Liquidity dry-up windows (example.LiquidityDryUpWindows); loads .env if present
+query-liquidity-dry-up: ## Liquidity dry-up windows (orderbook.analytics.LiquidityDryUpWindows); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.LiquidityDryUpWindows"
+	 sbt -batch "runMain orderbook.analytics.LiquidityDryUpWindows"
 
-query-realized-vol: ## Rolling realized volatility (example.RealizedVolatility); loads .env if present
+query-realized-vol: ## Rolling realized volatility (orderbook.analytics.RealizedVolatility); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.RealizedVolatility"
+	 sbt -batch "runMain orderbook.analytics.RealizedVolatility"
 
-query-parkinson-vol: ## Parkinson range volatility (example.ParkinsonVolatility); loads .env if present
+query-parkinson-vol: ## Parkinson range volatility (orderbook.analytics.ParkinsonVolatility); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.ParkinsonVolatility"
+	 sbt -batch "runMain orderbook.analytics.ParkinsonVolatility"
 
-query-vwap: ## Daily VWAP vs. average close (example.VwapVsClose); loads .env if present
+query-vwap: ## Daily VWAP vs. average close (orderbook.analytics.VwapVsClose); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.VwapVsClose"
+	 sbt -batch "runMain orderbook.analytics.VwapVsClose"
 
-query-cancel-add-ratio: ## Cancel-to-add ratio (example.CancelToAddRatio); loads .env if present
+query-cancel-add-ratio: ## Cancel-to-add ratio (orderbook.analytics.CancelToAddRatio); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.CancelToAddRatio"
+	 sbt -batch "runMain orderbook.analytics.CancelToAddRatio"
 
-query-trade-through: ## Trade-through detection (example.TradeThroughDetection); loads .env if present
+query-trade-through: ## Trade-through detection (orderbook.analytics.TradeThroughDetection); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.TradeThroughDetection"
+	 sbt -batch "runMain orderbook.analytics.TradeThroughDetection"
 
-query-effective-spread: ## Effective vs. quoted spread (example.EffectiveVsQuotedSpread); loads .env if present
+query-effective-spread: ## Effective vs. quoted spread (orderbook.analytics.EffectiveVsQuotedSpread); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain example.EffectiveVsQuotedSpread"
+	 sbt -batch "runMain orderbook.analytics.EffectiveVsQuotedSpread"
