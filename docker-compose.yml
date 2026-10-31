@@ -74,14 +74,29 @@ services:
 
   # ------------------------------------------------------------------
   # One-shot init container: bootstraps the Polaris realm + root principal
-  # in Postgres. Idempotent — a no-op once the realm exists.
+  # in Postgres. Compose re-runs it on every `up`, but `bootstrap` exits
+  # non-zero once the realm exists, which would keep `polaris` from
+  # starting. The wrapper treats "already bootstrapped" as success and
+  # still fails on any other error.
   # ------------------------------------------------------------------
   polaris-bootstrap:
     image: apache/polaris-admin-tool:1.8.0
     container_name: polaris-bootstrap
     environment:
       <<: *polaris-db
-    command: ["bootstrap", "--realm=default-realm", "--credential=default-realm,root,s3cr3t"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        out=$$(/opt/jboss/container/java/run/run-java.sh bootstrap \
+          --realm=default-realm --credential=default-realm,root,s3cr3t 2>&1)
+        rc=$$?
+        echo "$$out"
+        if [ $$rc -eq 0 ]; then exit 0; fi
+        if echo "$$out" | grep -qi "already"; then
+          echo "Realm already bootstrapped; nothing to do"
+          exit 0
+        fi
+        exit $$rc
     depends_on:
       postgres:
         condition: service_healthy
