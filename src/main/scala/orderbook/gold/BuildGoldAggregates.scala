@@ -1,4 +1,6 @@
-package example
+package orderbook.gold
+
+import orderbook.common.{OrderBookSchema, PolarisSpark, Watermark}
 
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.expressions.Window
@@ -19,7 +21,7 @@ import org.apache.spark.sql.functions._
   * carried forward across runs via `orderbook.gold.book_state`, so a resting
   * order posted in an earlier batch still counts in later ones.
   *
-  * Run with: sbt "runMain example.BuildGoldAggregates"
+  * Run with: sbt "runMain orderbook.gold.BuildGoldAggregates"
   */
 object BuildGoldAggregates {
 

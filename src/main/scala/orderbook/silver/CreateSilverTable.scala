@@ -1,4 +1,6 @@
-package example
+package orderbook.silver
+
+import orderbook.common.{OrderBookSchema, PolarisSpark}
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.col
@@ -8,7 +10,7 @@ import org.apache.spark.sql.functions.col
   * medallion layout. Rerunnable: `createOrReplace()` means the table always
   * ends up matching the schema currently defined in code.
   *
-  * Run with: sbt "runMain example.CreateSilverTable"
+  * Run with: sbt "runMain orderbook.silver.CreateSilverTable"
   */
 object CreateSilverTable {
 

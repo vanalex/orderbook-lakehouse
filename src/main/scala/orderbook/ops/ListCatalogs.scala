@@ -1,4 +1,4 @@
-package example
+package orderbook.ops
 
 /** Lists the catalogs registered in Polaris via its management API.
   *
@@ -12,7 +12,7 @@ package example
   *   - POLARIS_CLIENT_ID     (default root)
   *   - POLARIS_CLIENT_SECRET (default s3cr3t)
   *
-  * Run with: sbt "runMain example.ListCatalogs"
+  * Run with: sbt "runMain orderbook.ops.ListCatalogs"
   */
 object ListCatalogs {
 

@@ -1,11 +1,13 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: order-book imbalance (best bid qty vs. best ask qty)
   * joined against the *next* minute's OHLCV bar return, from
   * `gold.top_of_book_snapshots` and `gold.ohlcv_bars_1m`. A short-horizon
   * predictive-signal check — does imbalance lead price direction?
   *
-  * Run with: sbt "runMain example.BookImbalanceVsNextBar"
+  * Run with: sbt "runMain orderbook.analytics.BookImbalanceVsNextBar"
   */
 object BookImbalanceVsNextBar {
 

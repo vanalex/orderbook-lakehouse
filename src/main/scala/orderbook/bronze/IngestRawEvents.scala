@@ -1,4 +1,6 @@
-package example
+package orderbook.bronze
+
+import orderbook.common.{OrderBookSchema, PolarisSpark}
 
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.{col, current_timestamp, input_file_name, lit}
@@ -26,8 +28,8 @@ import org.apache.spark.sql.functions.{col, current_timestamp, input_file_name, 
   * `Watermark` is a pure efficiency win on top of silver's own
   * insert-only merge (Phase 6).
   *
-  * Run with: sbt "runMain example.IngestRawEvents <path> [format]"
-  * e.g.:     sbt "runMain example.IngestRawEvents data/raw_events json"
+  * Run with: sbt "runMain orderbook.bronze.IngestRawEvents <path> [format]"
+  * e.g.:     sbt "runMain orderbook.bronze.IngestRawEvents data/raw_events json"
   *
   * `format` is one of Spark's built-in reader formats (`json`, `csv`,
   * `parquet`); defaults to `json`. `path`/`format` can also come from the

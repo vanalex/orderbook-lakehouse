@@ -1,10 +1,12 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: cancel-to-add ratio per instrument per minute, from
   * `silver.book_events`. High ratios are the textbook flag for
   * quote-stuffing/spoofing-like behavior.
   *
-  * Run with: sbt "runMain example.CancelToAddRatio"
+  * Run with: sbt "runMain orderbook.analytics.CancelToAddRatio"
   */
 object CancelToAddRatio {
 

@@ -1,4 +1,6 @@
-package example
+package orderbook.tools
+
+import orderbook.common.{OrderBookSchema, PolarisSpark}
 
 import org.apache.spark.sql.Row
 
@@ -19,8 +21,8 @@ import scala.util.Random
   * appends to `orderbook.bronze.raw_events`, the same way it would for a
   * historical replay dump.
   *
-  * Run with: sbt "runMain example.GenerateSyntheticEvents [count] [instruments] [path] [format]"
-  * e.g.:     sbt "runMain example.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD data/raw_events json"
+  * Run with: sbt "runMain orderbook.tools.GenerateSyntheticEvents [count] [instruments] [path] [format]"
+  * e.g.:     sbt "runMain orderbook.tools.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD data/raw_events json"
   *
   * `path`/`format` default to `data/raw_events`/`json`, matching
   * `IngestRawEvents`' own defaults, and can also come from the

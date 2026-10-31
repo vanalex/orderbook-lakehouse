@@ -1,4 +1,6 @@
-package example
+package orderbook.ops
+
+import orderbook.common.PolarisSpark
 
 import java.time.Instant
 import java.time.format.DateTimeFormatter
@@ -23,7 +25,7 @@ import org.apache.spark.sql.SparkSession
   * compact first, so the snapshot/orphan cleanup that follows sees the
   * post-compaction state.
   *
-  * Run with: sbt "runMain example.MaintainTables"
+  * Run with: sbt "runMain orderbook.ops.MaintainTables"
   */
 object MaintainTables {
 

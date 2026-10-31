@@ -1,4 +1,6 @@
-package example
+package orderbook.silver
+
+import orderbook.common.OrderBookSchema
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.SparkSession

@@ -1,4 +1,4 @@
-package example
+package orderbook.common
 
 class OrderBookSchemaSpec extends munit.FunSuite {
   test("bronzeRawEvents has the raw feed columns") {

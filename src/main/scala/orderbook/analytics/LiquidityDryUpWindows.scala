@@ -1,11 +1,13 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: minutes with no resting liquidity on one or both sides
   * of the book (`gold.top_of_book_snapshots`), joined against that window's
   * OHLCV volume (`gold.ohlcv_bars_1m`) to see whether thin books coincide
   * with low — or, interestingly, high — volume.
   *
-  * Run with: sbt "runMain example.LiquidityDryUpWindows"
+  * Run with: sbt "runMain orderbook.analytics.LiquidityDryUpWindows"
   */
 object LiquidityDryUpWindows {
 

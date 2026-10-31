@@ -1,4 +1,6 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: effective spread (2x the distance between trade price
   * and the prevailing mid) vs. the quoted spread, from `silver.book_events`
@@ -7,7 +9,7 @@ package example
   * since gold only samples top-of-book once a minute — a true effective
   * spread needs event-level top-of-book, not this coarse join.
   *
-  * Run with: sbt "runMain example.EffectiveVsQuotedSpread"
+  * Run with: sbt "runMain orderbook.analytics.EffectiveVsQuotedSpread"
   */
 object EffectiveVsQuotedSpread {
 

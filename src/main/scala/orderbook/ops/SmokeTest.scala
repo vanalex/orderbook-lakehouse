@@ -1,4 +1,6 @@
-package example
+package orderbook.ops
+
+import orderbook.common.PolarisSpark
 
 /** End-to-end smoke test for the Spark <-> Polaris <-> SeaweedFS wiring: creates
   * a real Iceberg table, writes rows, reads them back, then drops the table.
@@ -8,7 +10,7 @@ package example
   * is what actually needed the storage/network fixes documented in the
   * README ("Setup notes").
   *
-  * Run with: sbt "runMain example.SmokeTest"
+  * Run with: sbt "runMain orderbook.ops.SmokeTest"
   */
 object SmokeTest {
 

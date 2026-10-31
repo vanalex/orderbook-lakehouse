@@ -1,4 +1,4 @@
-package example
+package orderbook.common
 
 import org.apache.spark.sql.SparkSession
 

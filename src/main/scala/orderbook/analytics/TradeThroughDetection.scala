@@ -1,11 +1,13 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: flags each trade as printing inside, above, or below the
   * quoted top-of-book from the preceding minute (`silver.book_events` joined
   * against `gold.top_of_book_snapshots`) — a coarse proxy for price impact,
   * given only 1-minute top-of-book sampling.
   *
-  * Run with: sbt "runMain example.TradeThroughDetection"
+  * Run with: sbt "runMain orderbook.analytics.TradeThroughDetection"
   */
 object TradeThroughDetection {
 

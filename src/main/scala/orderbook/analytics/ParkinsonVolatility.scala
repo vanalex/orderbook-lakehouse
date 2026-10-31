@@ -1,11 +1,13 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: Parkinson range-based volatility estimator (uses each
   * bar's high/low rather than close-to-close returns) per instrument, from
   * `gold.ohlcv_bars_1m`. Cheaper to compute than realized volatility and
   * uses information OHLCV bars already carry.
   *
-  * Run with: sbt "runMain example.ParkinsonVolatility"
+  * Run with: sbt "runMain orderbook.analytics.ParkinsonVolatility"
   */
 object ParkinsonVolatility {
 

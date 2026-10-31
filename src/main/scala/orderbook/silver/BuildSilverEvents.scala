@@ -1,4 +1,6 @@
-package example
+package orderbook.silver
+
+import orderbook.common.{OrderBookSchema, PolarisSpark, Watermark}
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.functions._
@@ -14,7 +16,7 @@ import org.apache.spark.sql.functions._
   * rescanning all of bronze every time. Falls back to a full read on the
   * first run, when no watermark is recorded yet.
   *
-  * Run with: sbt "runMain example.BuildSilverEvents"
+  * Run with: sbt "runMain orderbook.silver.BuildSilverEvents"
   */
 object BuildSilverEvents {
 

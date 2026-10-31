@@ -1,4 +1,6 @@
-package example
+package orderbook.gold
+
+import orderbook.common.{OrderBookSchema, PolarisSpark}
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.col
@@ -10,7 +12,7 @@ import org.apache.spark.sql.types.StructType
   * `OrderBookSchema`. Rerunnable: `createOrReplace()` means the tables always
   * end up matching the schema currently defined in code.
   *
-  * Run with: sbt "runMain example.CreateGoldTables"
+  * Run with: sbt "runMain orderbook.gold.CreateGoldTables"
   */
 object CreateGoldTables {
 

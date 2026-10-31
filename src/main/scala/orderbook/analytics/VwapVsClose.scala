@@ -1,10 +1,12 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: daily VWAP vs. the plain average close, per instrument,
   * from `gold.ohlcv_bars_1m`. A real execution-quality benchmark once this
   * is fed by actual (not synthetic) trade data.
   *
-  * Run with: sbt "runMain example.VwapVsClose"
+  * Run with: sbt "runMain orderbook.analytics.VwapVsClose"
   */
 object VwapVsClose {
 

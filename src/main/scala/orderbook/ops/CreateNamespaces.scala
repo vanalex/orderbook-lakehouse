@@ -1,10 +1,12 @@
-package example
+package orderbook.ops
+
+import orderbook.common.PolarisSpark
 
 /** Sanity-check job for the Spark <-> Polaris wiring: creates the
   * bronze/silver/gold namespaces the medallion pipeline will use, then
   * lists what's in the catalog to confirm connectivity end to end.
   *
-  * Run with: sbt "runMain example.CreateNamespaces"
+  * Run with: sbt "runMain orderbook.ops.CreateNamespaces"
   */
 object CreateNamespaces {
 

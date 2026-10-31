@@ -1,10 +1,12 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: rolling realized volatility (stddev of log returns over
   * a 30-bar window) per instrument, from `gold.ohlcv_bars_1m`. Standard
   * volatility estimate — compare instruments or event_dates.
   *
-  * Run with: sbt "runMain example.RealizedVolatility"
+  * Run with: sbt "runMain orderbook.analytics.RealizedVolatility"
   */
 object RealizedVolatility {
 

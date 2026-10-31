@@ -1,10 +1,12 @@
-package example
+package orderbook.analytics
+
+import orderbook.common.PolarisSpark
 
 /** Analytical query: bid-ask spread per instrument/minute, from
   * `gold.top_of_book_snapshots`. The core cost-of-trading signal — watch for
   * spread widening around volatile bars.
   *
-  * Run with: sbt "runMain example.SpreadOverTime"
+  * Run with: sbt "runMain orderbook.analytics.SpreadOverTime"
   */
 object SpreadOverTime {
 

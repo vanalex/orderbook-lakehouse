@@ -1,4 +1,6 @@
-package example
+package orderbook.bronze
+
+import orderbook.common.{OrderBookSchema, PolarisSpark}
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types.StructType
@@ -9,7 +11,7 @@ import org.apache.spark.sql.types.StructType
   * Rerunnable: `createOrReplace()` means both tables always end up matching
   * the schema currently defined in code.
   *
-  * Run with: sbt "runMain example.CreateBronzeTable"
+  * Run with: sbt "runMain orderbook.bronze.CreateBronzeTable"
   */
 object CreateBronzeTable {
 

@@ -1,4 +1,6 @@
-package example
+package orderbook.bronze
+
+import orderbook.common.OrderBookSchema
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.types.{StringType, StructField, StructType, TimestampType}
