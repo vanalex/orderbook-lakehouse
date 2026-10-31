@@ -19,6 +19,11 @@ input:
   http_server:
     path: /events
     allowed_verbs: [POST]
+    # The request is held open until the events are written to S3, which
+    # can take up to the output's batching period (5s) plus the upload.
+    # The default 5s timeout races that flush and returns 408 for any
+    # request smaller than a full batch, so allow well beyond it.
+    timeout: 30s
 
 pipeline:
   processors:
