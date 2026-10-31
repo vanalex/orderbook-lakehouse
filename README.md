@@ -22,10 +22,10 @@ SeaweedFS 4.48 (:8333)        ── S3-compatible storage, bucket orderbook-war
   | Service             | Purpose                                                                 |
   | ------------------- | ----------------------------------------------------------------------- |
   | `seaweedfs`         | `weed mini` all-in-one: S3 API on `:8333`, admin UI on `:23646`. Creates the `orderbook-warehouse` bucket and the `admin`/`password` S3 identity on startup |
-  | `postgres`          | Polaris metastore. `postgres-init.sql` creates `polaris_schema` on first init |
+  | `postgres`          | Polaris metastore. `infra/postgres/init.sql` creates `polaris_schema` on first init |
   | `polaris-bootstrap` | One-off: Polaris admin tool creates the realm and the `root`/`s3cr3t` principal in Postgres. Idempotent |
   | `polaris`           | Iceberg REST catalog + management API on `:8181`, health on `:8182`      |
-  | `polaris-init`      | One-off: `polaris-setup.sh` creates the `orderbook` catalog and grants. Idempotent (409 = already exists) |
+  | `polaris-init`      | One-off: `infra/polaris/setup.sh` creates the `orderbook` catalog and grants. Idempotent (409 = already exists) |
 
   `docker compose down` keeps the data and the catalog; `docker compose down -v` wipes both
   together, so they never get out of sync.
@@ -55,7 +55,7 @@ Full run: `make ingest && make silver && make gold`.
 
 ### Streaming into bronze (Redpanda Connect)
 
-The `redpanda-connect` service (`redpanda-connect/landing.yaml`) accepts events over HTTP and
+The `redpanda-connect` service (`infra/redpanda-connect/landing.yaml`) accepts events over HTTP and
 writes them to `s3://orderbook-warehouse/landing/raw_events/` as newline-delimited JSON files,
 one file per batch (up to 5000 events or 5s). `make ingest-stream` then runs `IngestRawEvents`
 against that prefix, so silver and gold don't change.
@@ -112,7 +112,7 @@ approximate. The code says so.
 Getting Spark to commit Iceberg tables through Polaris to a non-AWS S3 store needs a few
 non-obvious settings, all already in this repo:
 
-1. **`stsUnavailable: true`** on the catalog's `storageConfigInfo` (`polaris-setup.sh`), together
+1. **`stsUnavailable: true`** on the catalog's `storageConfigInfo` (`infra/polaris/setup.sh`), together
    with `SKIP_CREDENTIAL_SUBSCOPING_INDIRECTION`. Polaris doesn't try to hand out STS credentials,
    and Spark uses the S3 keys directly.
 2. **`AWS_ENDPOINT_URL_S3` / `AWS_ENDPOINT_URL_STS`** on the `polaris` service, pointing at
@@ -125,7 +125,7 @@ non-obvious settings, all already in this repo:
 4. **S3A for `remove_orphan_files`.** That maintenance procedure lists files through Hadoop's
    `FileSystem` API rather than `S3FileIO`, so `PolarisSpark` also registers `S3AFileSystem`
    (`hadoop-aws`) for the `s3://` scheme against the same endpoint.
-5. **Polaris + Postgres.** Polaris doesn't create its database schema (`postgres-init.sql` does),
+5. **Polaris + Postgres.** Polaris doesn't create its database schema (`infra/postgres/init.sql` does),
    and with JDBC storage the realm and root principal come from the admin tool's `bootstrap`
    command, not from `POLARIS_BOOTSTRAP_CREDENTIALS`. Keep `apache/polaris` and
    `apache/polaris-admin-tool` on the same version when upgrading. Polaris doesn't migrate its

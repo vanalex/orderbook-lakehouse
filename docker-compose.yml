@@ -65,7 +65,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       # Polaris doesn't create its schema itself; this runs on first init only.
-      - ./postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U polaris -d polaris"]
       interval: 5s
@@ -147,13 +147,13 @@ services:
       polaris:
         condition: service_healthy
     volumes:
-      - ./polaris-setup.sh:/setup.sh:ro
+      - ./infra/polaris/setup.sh:/setup.sh:ro
     entrypoint: ["/bin/sh", "/setup.sh"]
 
   # ------------------------------------------------------------------
   # Redpanda Connect — streams POSTed events into s3://orderbook-warehouse/
   # landing/raw_events/ as newline-delimited JSON files, for
-  # IngestRawEvents to append into bronze (redpanda-connect/landing.yaml)
+  # IngestRawEvents to append into bronze (infra/redpanda-connect/landing.yaml)
   # ------------------------------------------------------------------
   redpanda-connect:
     image: redpandadata/connect:4.113.0
@@ -168,7 +168,7 @@ services:
       AWS_REGION: us-east-1
     command: ["run", "/landing.yaml"]
     volumes:
-      - ./redpanda-connect/landing.yaml:/landing.yaml:ro
+      - ./infra/redpanda-connect/landing.yaml:/landing.yaml:ro
     depends_on:
       seaweedfs:
         condition: service_healthy

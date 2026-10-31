@@ -128,7 +128,7 @@ spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on 
 ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
 
 # ------------------------------------------------------------------
-# Streaming landing via Redpanda Connect (redpanda-connect/landing.yaml):
+# Streaming landing via Redpanda Connect (infra/redpanda-connect/landing.yaml):
 # events POSTed to the connect service land as JSON files under
 # STREAM_LANDING, and ingest-stream appends them to bronze like any
 # other landing directory.
