@@ -35,12 +35,12 @@ curl -s "$(1)" \
   -H "Polaris-Realm: $(REALM)" | jq .
 endef
 
-.PHONY: help token health catalogs catalog catalog-roles \
-        principals principal-roles namespaces tables scala-catalogs spark-init-namespaces \
+.PHONY: help token health catalogs catalog catalog-roles spark-hello \
+        principals principal-roles namespaces tables scala-catalogs spark-init-namespaces generate setup \
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
         spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
         spark-maintain-tables \
-        ingest silver gold maintain stream-send ingest-stream \
+        ingest clear-landing silver gold maintain \
         query-spread query-imbalance query-liquidity-dry-up query-realized-vol \
         query-parkinson-vol query-vwap query-cancel-add-ratio query-trade-through \
         query-effective-spread
@@ -87,6 +87,9 @@ spark-init-namespaces: ## Create bronze/silver/gold namespaces via Spark (orderb
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain orderbook.ops.CreateNamespaces"
 
+spark-hello: ## Check that local Spark runs, no Docker stack needed (orderbook.ops.SparkHelloWorld)
+	@sbt -batch "runMain orderbook.ops.SparkHelloWorld"
+
 spark-smoke-test: ## End-to-end table write/read check via Spark (orderbook.ops.SmokeTest); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain orderbook.ops.SmokeTest"
@@ -95,9 +98,9 @@ spark-create-bronze-table: ## Create orderbook.bronze.raw_events via Spark (orde
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
 	 sbt -batch "runMain orderbook.bronze.CreateBronzeTable"
 
-spark-ingest-raw-events: ## Append SOURCE_PATH's raw feed files into bronze (orderbook.bronze.IngestRawEvents); loads .env if present
+spark-ingest-raw-events: ## Append Redpanda Connect's landed files (STREAM_LANDING) into bronze (orderbook.bronze.IngestRawEvents); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 sbt -batch "runMain orderbook.bronze.IngestRawEvents"
+	 STREAM_LANDING=$(STREAM_LANDING) sbt -batch "runMain orderbook.bronze.IngestRawEvents"
 
 spark-create-silver-table: ## Create orderbook.silver.book_events via Spark (orderbook.silver.CreateSilverTable); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
@@ -125,28 +128,28 @@ spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on 
 #   make ingest && make silver && make gold
 # ------------------------------------------------------------------
 
-ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
+setup: spark-init-namespaces spark-create-bronze-table spark-create-silver-table spark-create-gold-tables clear-landing ## Create namespaces, (re)create all tables empty, and clear the landing prefix
 
 # ------------------------------------------------------------------
-# Streaming landing via Redpanda Connect (infra/redpanda-connect/landing.yaml):
-# events POSTed to the connect service land as JSON files under
-# STREAM_LANDING, and ingest-stream appends them to bronze like any
-# other landing directory.
+# Ingest is streaming-only, through Redpanda Connect
+# (infra/redpanda-connect/landing.yaml): producers POST events to
+# STREAM_URL, Redpanda Connect lands them as NDJSON files under
+# STREAM_LANDING, and `make ingest` appends new landed files to bronze.
 # ------------------------------------------------------------------
 
 STREAM_URL     ?= http://localhost:4195/events
 STREAM_LANDING ?= s3://orderbook-warehouse/landing/raw_events
-STREAM_SOURCE  ?= data/raw_events
+GEN_COUNT      ?= 5000
+GEN_INTERVAL   ?= 1000
 
-stream-send: ## POST local JSON event files to Redpanda Connect (STREAM_SOURCE=data/raw_events)
-	@find $(STREAM_SOURCE) -name '*.json' | while read -r f; do \
-	  curl -sf --data-binary @"$$f" $(STREAM_URL) || { echo "Failed to send $$f" >&2; exit 1; }; \
-	  echo "Sent $$f"; \
-	done
+generate: ## POST synthetic events to Redpanda Connect (GEN_COUNT=5000, GEN_INTERVAL=1000 ms apart, STREAM_URL)
+	@sbt -batch "runMain orderbook.tools.GenerateSyntheticEvents $(GEN_COUNT) BTC-USD,ETH-USD $(STREAM_URL) $(GEN_INTERVAL)"
 
-ingest-stream: ## Append Redpanda Connect's landed files into bronze (orderbook.bronze.IngestRawEvents); loads .env if present
+ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
+
+clear-landing: ## Delete landed files under STREAM_LANDING (orderbook.ops.ClearLanding); run by make setup; loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
-	 SOURCE_PATH=$(STREAM_LANDING) SOURCE_FORMAT=json sbt -batch "runMain orderbook.bronze.IngestRawEvents"
+	 STREAM_LANDING=$(STREAM_LANDING) sbt -batch "runMain orderbook.ops.ClearLanding"
 
 silver: spark-build-silver-events ## Alias for spark-build-silver-events
 

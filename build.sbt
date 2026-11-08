@@ -37,6 +37,9 @@ lazy val root = (project in file("."))
       munit % Test
     ),
     fork := true,
+    // Pass the forked JVM's output through as-is. Without this, sbt prefixes
+    // every stderr line (all log4j output) with [error].
+    outputStrategy := Some(StdoutOutput),
     javaOptions ++= javaModuleOpens
   )
 

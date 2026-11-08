@@ -75,7 +75,7 @@ object BuildSilverEvents {
     val silverTable = s"$catalog.silver.book_events"
 
     val current   = Watermark.currentSnapshotId(spark, bronzeTable)
-    val watermark = Watermark.get(spark, silverTable, WatermarkName)
+    val watermark = Watermark.get(spark, silverTable, WatermarkName, bronzeTable)
 
     if (current.isEmpty) {
       println(s"BuildSilverEvents: $bronzeTable has no data yet — nothing to do")
@@ -98,6 +98,7 @@ object BuildSilverEvents {
       val cleanCount  = cleaned.count()
       checkQuality(bronzeCount, cleanCount)
 
+      val silverBefore = spark.table(silverTable).count()
       cleaned.createOrReplaceTempView("silver_staged_events")
       spark.sql(s"""
         MERGE INTO $silverTable AS target
@@ -106,9 +107,12 @@ object BuildSilverEvents {
         WHEN NOT MATCHED THEN INSERT *
       """)
 
+      val inserted = spark.table(silverTable).count() - silverBefore
+
       Watermark.set(spark, silverTable, WatermarkName, current.get)
       println(
-        s"Merged $cleanCount of $bronzeCount new bronze events (through snapshot ${current.get}) into $silverTable"
+        s"Read $bronzeCount new bronze events (through snapshot ${current.get}), $cleanCount clean; " +
+          s"inserted $inserted into $silverTable, skipped ${cleanCount - inserted} already there"
       )
     }
 

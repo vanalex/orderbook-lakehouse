@@ -1,10 +1,11 @@
 # Redpanda Connect pipeline: streams raw order-book events into a landing
 # prefix in SeaweedFS, where IngestRawEvents picks them up into
-# orderbook.bronze.raw_events (`make ingest-stream`).
+# orderbook.bronze.raw_events (`make ingest`). This is the only way data
+# enters the lakehouse.
 #
-# Producers POST to http://localhost:4195/events, one JSON event per line
-# (a single event, or a whole newline-delimited file such as a Spark JSON
-# part file). The request returns once the events are written to S3.
+# Producers (e.g. `make generate`) POST to http://localhost:4195/events, one
+# JSON event per line (a single event, or many newline-delimited). The
+# request returns once the events are written to S3.
 #
 # Events are buffered and written as newline-delimited JSON files, one file
 # per batch, so bronze ingestion sees a few larger files rather than one

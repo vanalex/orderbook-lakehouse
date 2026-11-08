@@ -179,7 +179,7 @@ object BuildGoldAggregates {
     val bookStateTable = s"$catalog.gold.book_state"
 
     val current   = Watermark.currentSnapshotId(spark, silverTable)
-    val watermark = Watermark.get(spark, ohlcvTable, WatermarkName)
+    val watermark = Watermark.get(spark, ohlcvTable, WatermarkName, silverTable)
 
     if (current.isEmpty) {
       println(s"BuildGoldAggregates: $silverTable has no data yet — nothing to do")

@@ -52,6 +52,8 @@ object PolarisSpark {
       .config(s"$cat.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
       .config(s"$cat.uri", s"$polarisUrl/api/catalog")
       .config(s"$cat.warehouse", catalogName)
+      .config(s"$cat.rest.auth.type", "oauth2")
+      .config(s"$cat.oauth2-server-uri", s"$polarisUrl/api/catalog/v1/oauth/tokens")
       .config(s"$cat.credential", s"$clientId:$clientSecret")
       .config(s"$cat.scope", "PRINCIPAL_ROLE:ALL")
       .config(s"$cat.header.Polaris-Realm", realm)

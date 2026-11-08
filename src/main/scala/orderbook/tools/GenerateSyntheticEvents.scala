@@ -1,6 +1,6 @@
 package orderbook.tools
 
-import orderbook.common.{OrderBookSchema, PolarisSpark}
+import orderbook.common.OrderBookSchema
 
 import org.apache.spark.sql.Row
 
@@ -11,98 +11,183 @@ import scala.util.Random
 /** Synthetic demo-data source for `orderbook.bronze.raw_events`
   * (data_pipeline_plan.md, Phase 3 "source for demo data").
   *
-  * Simulates a toy order book per instrument: `add` events push onto a
-  * resting-orders list, `cancel`/`modify`/`trade` events pick a resting order
-  * off that list, so the generated feed has internally consistent references
-  * (a `cancel` always cancels a real prior `add`) instead of pure noise.
+  * Simulates a small matching engine per instrument, so the feed is internally
+  * consistent and the book gold rebuilds from it is never crossed:
   *
-  * This job only writes files to a landing path — it doesn't touch the
-  * Iceberg table itself. `IngestRawEvents` is what reads that path and
-  * appends to `orderbook.bronze.raw_events`, the same way it would for a
-  * historical replay dump.
+  *  - `add`: a limit order priced around a random-walking mid. If it crosses
+  *    the opposite side (best ask for a buy, best bid for a sell) it first
+  *    trades against those resting orders, best price first. Each fill is a
+  *    `trade` event at the resting order's side and price. Only the unfilled
+  *    remainder rests, and it's emitted as the `add`.
+  *  - `trade`: a market order hitting the best bid or best ask.
+  *  - `cancel`: removes a random resting order in full.
+  *  - `snapshot`: a marker row with no side, price or qty.
   *
-  * Run with: sbt "runMain orderbook.tools.GenerateSyntheticEvents [count] [instruments] [path] [format]"
-  * e.g.:     sbt "runMain orderbook.tools.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD data/raw_events json"
+  * The generator doesn't emit `modify`. Without an `order_id` gold can't
+  * apply a modify's new absolute qty (see `OrderBookSchema.topOfBookSnapshots`),
+  * so a modify followed by a cancel would leave "ghost" qty at that level.
   *
-  * `path`/`format` default to `data/raw_events`/`json`, matching
-  * `IngestRawEvents`' own defaults, and can also come from the
-  * `SOURCE_PATH`/`SOURCE_FORMAT` env vars.
+  * Events are `intervalMs` apart (default 1s), so 5000 events cover about
+  * 80 minutes: enough one-minute bars for every analytics query.
+  *
+  * This job is a producer, not a Spark job: it POSTs the events as
+  * newline-delimited JSON to Redpanda Connect (`infra/redpanda-connect/landing.yaml`),
+  * which lands them as files under `s3://orderbook-warehouse/landing/raw_events/`.
+  * `IngestRawEvents` then appends those files to `orderbook.bronze.raw_events`.
+  *
+  * Run with: sbt "runMain orderbook.tools.GenerateSyntheticEvents [count] [instruments] [url] [intervalMs]"
+  * e.g.:     sbt "runMain orderbook.tools.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD http://localhost:4195/events 1000"
+  *
+  * `url` defaults to the `STREAM_URL` env var, else `http://localhost:4195/events`.
   */
 object GenerateSyntheticEvents {
 
+  /** Events per POST. Matches the landing pipeline's batch size, so each
+    * request becomes one landed file and returns as soon as it's written.
+    */
+  val RequestSize: Int = 5000
+
   private case class RestingOrder(side: String, price: Double, var qty: Double)
 
+  /** Per-instrument book: resting orders on each side plus the mid price. */
+  private final class Book(var mid: Double) {
+    val bids: ArrayBuffer[RestingOrder] = ArrayBuffer.empty
+    val asks: ArrayBuffer[RestingOrder] = ArrayBuffer.empty
+
+    def side(s: String): ArrayBuffer[RestingOrder] = if (s == "buy") bids else asks
+
+    def bestBid: Option[RestingOrder] = bids.maxByOption(_.price)
+    def bestAsk: Option[RestingOrder] = asks.minByOption(_.price)
+
+    def size: Int = bids.length + asks.length
+  }
+
+  private def round(p: Double): Double = math.round(p * 100) / 100.0
+
   /** Pure event generation, no Spark/IO — kept separate so it's unit-testable. */
-  def generate(count: Int, instruments: Seq[String], seed: Long = 42L): Seq[Row] = {
+  def generate(count: Int, instruments: Seq[String], seed: Long = 42L, intervalMs: Long = 1000L): Seq[Row] = {
     val rnd = new Random(seed)
     // Fixed epoch anchor (not wall-clock) so runs are reproducible for a given seed.
     val startMillis = 1700000000000L
+    val books       = instruments.map(_ -> new Book(100.0)).toMap
 
-    val resting  = instruments.map(_ -> ArrayBuffer.empty[RestingOrder]).toMap
-    val midPrice = scala.collection.mutable.Map(instruments.map(_ -> 100.0): _*)
+    val out   = ArrayBuffer.empty[Row]
+    var seqNo     = 0L
+    var step      = 0L
+    var stepStart = 0
 
-    (0 until count).map { i =>
+    // Events produced by the same step (an aggressive add and its fills) get
+    // consecutive milliseconds so their order is unambiguous.
+    def emit(eventType: String, instrument: String, side: String, price: java.lang.Double, qty: java.lang.Double): Unit = {
+      val offsetMs = out.length - stepStart
+      seqNo += 1
+      out += Row(eventType, instrument, new Timestamp(startMillis + step * intervalMs + offsetMs), side, price, qty, seqNo)
+    }
+
+    /** Fills `qty` of an incoming `side` order against the opposite side,
+      * best price first, while `crosses(restingPrice)` holds. Returns the
+      * unfilled remainder.
+      */
+    def matchAgainst(instrument: String, book: Book, side: String, qty: Double, crosses: Double => Boolean): Double = {
+      val opposite = book.side(if (side == "buy") "sell" else "buy")
+      var left     = qty
+      var best     = if (side == "buy") book.bestAsk else book.bestBid
+      while (left > 0 && best.exists(o => crosses(o.price))) {
+        val o      = best.get
+        val filled = math.min(left, o.qty)
+        emit(OrderBookSchema.EventType.Trade, instrument, o.side, o.price, filled)
+        o.qty -= filled
+        left -= filled
+        if (o.qty <= 0) opposite -= o
+        best = if (side == "buy") book.bestAsk else book.bestBid
+      }
+      left
+    }
+
+    while (out.length < count) {
+      stepStart = out.length
       val instrument = instruments(rnd.nextInt(instruments.length))
-      val book       = resting(instrument)
-      val ts         = new Timestamp(startMillis + i * 10L)
-      val seqNo      = (i + 1).toLong
+      val book       = books(instrument)
+      book.mid = round(book.mid + rnd.nextGaussian() * 0.05)
 
       val roll = rnd.nextDouble()
-      val eventType =
-        if (book.isEmpty || roll < 0.6) OrderBookSchema.EventType.Add
-        else if (roll < 0.75) OrderBookSchema.EventType.Cancel
-        else if (roll < 0.9) OrderBookSchema.EventType.Modify
-        else if (roll < 0.97) OrderBookSchema.EventType.Trade
-        else OrderBookSchema.EventType.Snapshot
+      if (book.size < 10 || roll < 0.55) {
+        // Limit order. ~15% are priced aggressively through the mid.
+        val side       = if (rnd.nextBoolean()) "buy" else "sell"
+        val dir        = if (side == "buy") -1.0 else 1.0
+        val aggressive = rnd.nextDouble() < 0.15
+        val offset     = if (aggressive) -(0.05 + rnd.nextDouble() * 0.3) else 0.01 + rnd.nextDouble() * 0.5
+        val price      = round(book.mid + dir * offset)
+        val qty        = (1 + rnd.nextInt(100)).toDouble
 
-      eventType match {
-        case OrderBookSchema.EventType.Add =>
-          val side = if (rnd.nextBoolean()) "buy" else "sell"
-          midPrice(instrument) += (rnd.nextDouble() - 0.5)
-          val price = midPrice(instrument) + (if (side == "buy") -rnd.nextDouble() else rnd.nextDouble())
-          val qty   = 1 + rnd.nextInt(100)
-          book += RestingOrder(side, price, qty.toDouble)
-          Row(eventType, instrument, ts, side, price, qty.toDouble, seqNo)
-
-        case OrderBookSchema.EventType.Cancel =>
-          val order = book.remove(rnd.nextInt(book.length))
-          Row(eventType, instrument, ts, order.side, order.price, order.qty, seqNo)
-
-        case OrderBookSchema.EventType.Modify =>
-          val order = book(rnd.nextInt(book.length))
-          order.qty = math.max(1.0, order.qty + (rnd.nextInt(21) - 10))
-          Row(eventType, instrument, ts, order.side, order.price, order.qty, seqNo)
-
-        case OrderBookSchema.EventType.Trade =>
-          val idx        = rnd.nextInt(book.length)
-          val order      = book(idx)
-          val tradedQty  = math.min(order.qty, 1 + rnd.nextInt(order.qty.toInt)).toDouble
-          order.qty -= tradedQty
-          if (order.qty <= 0) book.remove(idx)
-          Row(eventType, instrument, ts, order.side, order.price, tradedQty, seqNo)
-
-        case OrderBookSchema.EventType.Snapshot =>
-          Row(eventType, instrument, ts, null, null, null, seqNo)
+        val crosses: Double => Boolean = if (side == "buy") _ <= price else _ >= price
+        val left = matchAgainst(instrument, book, side, qty, crosses)
+        if (left > 0) {
+          book.side(side) += RestingOrder(side, price, left)
+          emit(OrderBookSchema.EventType.Add, instrument, side, price, left)
+        }
+      } else if (roll < 0.85) {
+        val all   = book.bids ++ book.asks
+        val order = all(rnd.nextInt(all.length))
+        book.side(order.side) -= order
+        emit(OrderBookSchema.EventType.Cancel, instrument, order.side, order.price, order.qty)
+      } else if (roll < 0.97) {
+        // Market order: hits the best bid (sell) or lifts the best ask (buy).
+        val side = if (rnd.nextBoolean()) "buy" else "sell"
+        val qty  = (1 + rnd.nextInt(60)).toDouble
+        matchAgainst(instrument, book, side, qty, _ => true)
+      } else {
+        emit(OrderBookSchema.EventType.Snapshot, instrument, null, null, null)
       }
+
+      // Keep the mid inside the spread so new passive orders stay sensible.
+      for (b <- book.bestBid; a <- book.bestAsk) book.mid = round((b.price + a.price) / 2)
+
+      step += 1
     }
+
+    out.take(count).toSeq
+  }
+
+  /** One event as a JSON line, in the raw-feed shape `IngestRawEvents`
+    * reads. Null fields (a snapshot's side/price/qty) are left out, and the
+    * timestamp is ISO-8601 UTC, so the feed doesn't depend on the producer's
+    * timezone.
+    */
+  def toJsonLine(row: Row): String = {
+    val fields = OrderBookSchema.bronzeRawEvents.fieldNames.toSeq.zipWithIndex.collect {
+      case (name, i) if !row.isNullAt(i) =>
+        name -> (row.get(i) match {
+          case ts: Timestamp => ujson.Str(ts.toInstant.toString)
+          case s: String     => ujson.Str(s)
+          case d: Double     => ujson.Num(d)
+          case l: Long       => ujson.Num(l.toDouble)
+          case other         => ujson.Str(other.toString)
+        }): (String, ujson.Value)
+    }
+    ujson.write(ujson.Obj.from(fields))
   }
 
   def main(args: Array[String]): Unit = {
     val count       = args.headOption.map(_.toInt).getOrElse(1000)
     val instruments = args.lift(1).map(_.split(",").toIndexedSeq).getOrElse(Seq("BTC-USD", "ETH-USD"))
-    val path        = args.lift(2).getOrElse(sys.env.getOrElse("SOURCE_PATH", "data/raw_events"))
-    val format      = args.lift(3).getOrElse(sys.env.getOrElse("SOURCE_FORMAT", "json"))
+    val url         = args.lift(2).getOrElse(sys.env.getOrElse("STREAM_URL", "http://localhost:4195/events"))
+    val intervalMs  = args.lift(3).map(_.toLong).getOrElse(1000L)
 
-    val spark = PolarisSpark.session("orderbook-generate-synthetic-events")
+    val rows = generate(count, instruments, intervalMs = intervalMs)
 
-    val rows = generate(count, instruments)
-    val df   = spark.createDataFrame(spark.sparkContext.parallelize(rows), OrderBookSchema.bronzeRawEvents)
-    // append: each run adds another batch of files, so re-running
-    // IngestRawEvents against a growing `path` picks up more data over time.
-    df.write.format(format).mode("append").save(path)
+    rows.grouped(RequestSize).zipWithIndex.foreach { case (chunk, i) =>
+      val body = chunk.map(toJsonLine).mkString("", "\n", "\n")
+      val resp =
+        try requests.post(url, data = body, readTimeout = 60000, check = false)
+        catch {
+          case e: java.net.ConnectException =>
+            sys.error(s"Can't reach Redpanda Connect at $url (is the stack up? docker compose up -d): ${e.getMessage}")
+        }
+      if (!resp.is2xx) sys.error(s"POST $url failed with ${resp.statusCode}: ${resp.text()}")
+      println(s"Request ${i + 1}: sent ${chunk.length} events")
+    }
 
-    println(s"Wrote ${rows.length} synthetic events to $path ($format)")
-
-    spark.stop()
+    println(s"Sent ${rows.length} synthetic events to $url")
   }
 }

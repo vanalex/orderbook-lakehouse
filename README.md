@@ -4,10 +4,15 @@ A small local data lakehouse for market order-book events. Synthetic exchange ev
 bronze → silver → gold pipeline and end up as tables you can run trading analytics on. It's
 Scala/Spark on Apache Iceberg, with the infrastructure running in Docker.
 
+For a step-by-step walkthrough of the demo, see [GUIDE.md](GUIDE.md).
+
 ## The stack
 
 ```
-Spark job (Scala 2.13, local mode)
+Producer (make generate) ──HTTP──► Redpanda Connect 4.113 (:4195)
+                                      │  NDJSON files → s3://orderbook-warehouse/landing/raw_events/
+                                      ▼
+Spark job (Scala 2.13, local mode) ◄──┘  reads landed files, writes Iceberg tables
    │  Iceberg REST protocol: catalog + metadata
    ▼
 Apache Polaris 1.8.0 (:8181) ──► Postgres 17   ── catalog state (persists across restarts)
@@ -26,6 +31,7 @@ SeaweedFS 4.48 (:8333)        ── S3-compatible storage, bucket orderbook-war
   | `polaris-bootstrap` | One-off: Polaris admin tool creates the realm and the `root`/`s3cr3t` principal in Postgres. Idempotent |
   | `polaris`           | Iceberg REST catalog + management API on `:8181`, health on `:8182`      |
   | `polaris-init`      | One-off: `infra/polaris/setup.sh` creates the `orderbook` catalog and grants. Idempotent (409 = already exists) |
+  | `redpanda-connect`  | The only way data comes in: accepts events over HTTP on `:4195` and lands them in S3 (see [Ingest](#ingest-redpanda-connect)) |
 
   `docker compose down` keeps the data and the catalog; `docker compose down -v` wipes both
   together, so they never get out of sync.
@@ -40,18 +46,25 @@ SeaweedFS 4.48 (:8333)        ── S3-compatible storage, bucket orderbook-war
 
 The feed has five event types: `add`, `cancel`, `modify`, `trade` and `snapshot`. Each event has
 `instrument`, `timestamp`, `side`, `price`, `qty` and `seq_no` (`OrderBookSchema.scala`).
-`GenerateSyntheticEvents` makes realistic demo data: it simulates a book for each instrument, so
-cancels and trades hit orders that actually exist. The same seed always gives the same data.
+`GenerateSyntheticEvents` (`make generate`) makes realistic demo data and POSTs it to Redpanda
+Connect, the same way any other producer would. It runs a small matching
+engine for each instrument. Orders that cross the book trade against resting orders (best price
+first), market orders hit the best bid or ask, and cancels remove orders that actually exist, so
+the book gold rebuilds is never crossed. Events are 1s apart by default (`GEN_INTERVAL`), so 5000
+events cover about 80 minutes of one-minute bars. It doesn't emit `modify`, because gold can't
+apply one without an `order_id`. The same seed always gives the same data.
 
 ## The pipeline
 
 | Layer | Job | What it does |
 |---|---|---|
-| **Bronze** `bronze.raw_events` | `IngestRawEvents` | Reads JSON/CSV/Parquet files from a landing folder and lines them up with the bronze schema (missing columns become null, extra ones are dropped, types are cast). It records which files it has already loaded in `bronze.ingested_files`, so a rerun only picks up new files. |
+| **Bronze** `bronze.raw_events` | `IngestRawEvents` | Reads the NDJSON files Redpanda Connect landed in S3 and lines them up with the bronze schema (missing columns become null, extra ones are dropped, types are cast). It records which files it has already loaded in `bronze.ingested_files`, so a rerun only picks up new files. |
 | **Silver** `silver.book_events` | `BuildSilverEvents` | Drops malformed rows, removes duplicates on `(instrument, seq_no)`, adds `event_date`, then `MERGE INTO`s silver, so a rerun never inserts the same event twice. It stops before writing if more than 50% of a batch is malformed. Partitioned by instrument and date. |
 | **Gold** | `BuildGoldAggregates` | Builds **1-minute OHLCV bars** (open/high/low/close/volume) from trades, and **top-of-book snapshots** (best bid and ask each minute) by keeping a running quantity for every price level. That running book is saved in `gold.book_state`, so orders from earlier runs still count. |
 
-Full run: `make ingest && make silver && make gold`.
+From scratch: `make setup && make generate && make ingest && make silver && make gold`.
+`make setup` (re)creates every table empty and deletes the landed files (`make clear-landing`), so
+it also resets the pipeline on a running stack.
 
 The Scala packages under `src/main/scala/orderbook/` follow the same layers:
 
@@ -60,23 +73,25 @@ The Scala packages under `src/main/scala/orderbook/` follow the same layers:
 | `common` | `PolarisSpark` (Spark session wired to Polaris + SeaweedFS), `OrderBookSchema`, `Watermark` |
 | `bronze` / `silver` / `gold` | Each layer's `Create*Table(s)` job and the job that writes it |
 | `analytics` | Read-only query jobs (see [Analytics](#analytics)) |
-| `ops` | `CreateNamespaces`, `MaintainTables`, `SmokeTest`, `ListCatalogs` |
+| `ops` | `CreateNamespaces`, `MaintainTables`, `ClearLanding`, `SmokeTest`, `ListCatalogs` |
 | `tools` | `GenerateSyntheticEvents` |
 
 Tests mirror the same packages under `src/test/scala/orderbook/`.
 
-### Streaming into bronze (Redpanda Connect)
+### Ingest (Redpanda Connect)
 
-The `redpanda-connect` service (`infra/redpanda-connect/landing.yaml`) accepts events over HTTP and
-writes them to `s3://orderbook-warehouse/landing/raw_events/` as newline-delimited JSON files,
-one file per batch (up to 5000 events or 5s). `make ingest-stream` then runs `IngestRawEvents`
-against that prefix, so silver and gold don't change.
+Events only come in over HTTP. The `redpanda-connect` service (`infra/redpanda-connect/landing.yaml`)
+accepts them and writes them to `s3://orderbook-warehouse/landing/raw_events/` as newline-delimited
+JSON files, one file per batch (up to 5000 events or 5s). `make ingest` then runs
+`IngestRawEvents` against that prefix (`STREAM_LANDING`) to append the new files to bronze. Bronze
+loading is micro-batch: events land continuously, and each `make ingest` moves what has landed
+into Iceberg.
 
 ```sh
+make generate                    # POSTs 5000 synthetic events, one request per 5000
 curl --data-binary '{"event_type":"add","instrument":"BTC-USD","timestamp":"2026-10-26T10:00:00Z","side":"buy","price":100.5,"qty":3,"seq_no":1}' \
-  http://localhost:4195/events
-make stream-send                 # or replay GenerateSyntheticEvents output from data/raw_events
-make ingest-stream && make silver && make gold
+  http://localhost:4195/events   # or send your own
+make ingest && make silver && make gold
 ```
 
 A request body can hold one event or many, one per line. The request returns once the events
