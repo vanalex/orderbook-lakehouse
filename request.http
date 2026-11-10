@@ -1,0 +1,135 @@
+### Polaris requests for the local demo stack (docker compose up -d).
+#
+# Written for the JetBrains HTTP Client (IntelliJ: click the ▶ gutter icon).
+# Run "Get token" first: its response handler stores the access token in
+# {{token}} for every other request in this session. Tokens expire after
+# about an hour; rerun it if you start getting 401s.
+#
+# Credentials and names match docker-compose.yml / infra/polaris/setup.sh.
+
+@polaris = http://localhost:8181
+@health = http://localhost:8182
+@realm = default-realm
+@clientId = root
+@clientSecret = s3cr3t
+@catalog = orderbook
+@namespace = bronze
+@table = raw_events
+
+# ======================================================================
+# Auth & health
+# ======================================================================
+
+### Get token (root principal)
+POST {{polaris}}/api/catalog/v1/oauth/tokens
+Polaris-Realm: {{realm}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id={{clientId}}&client_secret={{clientSecret}}&scope=PRINCIPAL_ROLE:ALL
+
+> {%
+    client.global.set("token", response.body.access_token);
+%}
+
+### Health
+GET {{health}}/q/health
+
+# ======================================================================
+# Management API — catalogs, principals, roles
+# ======================================================================
+
+### List catalogs
+GET {{polaris}}/api/management/v1/catalogs
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### Get catalog
+GET {{polaris}}/api/management/v1/catalogs/{{catalog}}
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List catalog roles
+GET {{polaris}}/api/management/v1/catalogs/{{catalog}}/catalog-roles
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List grants on catalog_admin
+GET {{polaris}}/api/management/v1/catalogs/{{catalog}}/catalog-roles/catalog_admin/grants
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List principals
+GET {{polaris}}/api/management/v1/principals
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List principal roles
+GET {{polaris}}/api/management/v1/principal-roles
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### Catalog roles attached to service_admin
+GET {{polaris}}/api/management/v1/principal-roles/service_admin/catalog-roles/{{catalog}}
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+# ======================================================================
+# Iceberg REST catalog API — namespaces & tables
+# ======================================================================
+
+### Catalog config (what Spark sees on connect)
+GET {{polaris}}/api/catalog/v1/config?warehouse={{catalog}}
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List namespaces
+GET {{polaris}}/api/catalog/v1/{{catalog}}/namespaces
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### Get namespace
+GET {{polaris}}/api/catalog/v1/{{catalog}}/namespaces/{{namespace}}
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List tables in namespace (bronze | silver | gold)
+GET {{polaris}}/api/catalog/v1/{{catalog}}/namespaces/{{namespace}}/tables
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### Load table: schema, snapshots, properties (incl. watermarks)
+# Tables: bronze.raw_events, bronze.ingested_files, silver.book_events,
+#         gold.book_state, gold.top_of_book_snapshots, gold.ohlcv_bars_*
+GET {{polaris}}/api/catalog/v1/{{catalog}}/namespaces/{{namespace}}/tables/{{table}}
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### Table exists? (204 = yes, 404 = no)
+HEAD {{polaris}}/api/catalog/v1/{{catalog}}/namespaces/{{namespace}}/tables/{{table}}
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+### List views in namespace
+GET {{polaris}}/api/catalog/v1/{{catalog}}/namespaces/{{namespace}}/views
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+
+# ======================================================================
+# Writes — careful, these change catalog state
+# ======================================================================
+
+### Create a scratch namespace
+POST {{polaris}}/api/catalog/v1/{{catalog}}/namespaces
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
+Content-Type: application/json
+
+{
+  "namespace": ["scratch"],
+  "properties": {}
+}
+
+### Drop the scratch namespace (must be empty)
+DELETE {{polaris}}/api/catalog/v1/{{catalog}}/namespaces/scratch
+Authorization: Bearer {{token}}
+Polaris-Realm: {{realm}}
