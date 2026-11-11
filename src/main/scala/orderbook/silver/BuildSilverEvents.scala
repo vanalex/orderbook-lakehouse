@@ -98,7 +98,8 @@ object BuildSilverEvents {
       val cleanCount  = cleaned.count()
       checkQuality(bronzeCount, cleanCount)
 
-      val silverBefore = spark.table(silverTable).count()
+      val silverBefore   = spark.table(silverTable).count()
+      val snapshotBefore = Watermark.currentSnapshotId(spark, silverTable)
       cleaned.createOrReplaceTempView("silver_staged_events")
       spark.sql(s"""
         MERGE INTO $silverTable AS target
@@ -114,6 +115,7 @@ object BuildSilverEvents {
         s"Read $bronzeCount new bronze events (through snapshot ${current.get}), $cleanCount clean; " +
           s"inserted $inserted into $silverTable, skipped ${cleanCount - inserted} already there"
       )
+      println(Watermark.describeCommit(spark, silverTable, snapshotBefore))
     }
 
     spark.stop()

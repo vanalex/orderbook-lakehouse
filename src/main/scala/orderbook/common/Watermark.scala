@@ -20,6 +20,18 @@ object Watermark {
   def currentSnapshotId(spark: SparkSession, table: String): Option[Long] =
     Option(Spark3Util.loadIcebergTable(spark, table).currentSnapshot()).map(_.snapshotId())
 
+  /** One log line for the snapshot a write committed to `table`, given the
+    * table's snapshot id from before the write. If the id hasn't changed,
+    * the write committed nothing (e.g. a MERGE with nothing to insert).
+    */
+  def describeCommit(spark: SparkSession, table: String, before: Option[Long]): String =
+    currentSnapshotId(spark, table) match {
+      case after @ Some(id) if after != before =>
+        s"Committed snapshot $id to $table (parent ${before.getOrElse("none")})"
+      case after =>
+        s"No new snapshot on $table (current ${after.getOrElse("none")})"
+    }
+
   /** The snapshot id of `sourceTable` last recorded against `sinkTable`
     * under `name`, or `None` on the sink's first run.
     *

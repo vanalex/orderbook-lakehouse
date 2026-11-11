@@ -198,18 +198,24 @@ object BuildGoldAggregates {
       }
       val cached = silverBatch.cache()
 
-      val bars = ohlcvBars(cached)
+      val bars        = ohlcvBars(cached)
+      val ohlcvBefore = Watermark.currentSnapshotId(spark, ohlcvTable)
       bars.writeTo(ohlcvTable).append()
       println(s"Appended ${bars.count()} OHLCV bars to $ohlcvTable")
+      println(Watermark.describeCommit(spark, ohlcvTable, ohlcvBefore))
 
       val priorState = if (watermark.isEmpty) emptyBookState(spark) else spark.table(bookStateTable)
       val (snapshots, newState) = topOfBookSnapshots(cached, priorState)
 
+      val topOfBookBefore = Watermark.currentSnapshotId(spark, topOfBookTable)
       snapshots.writeTo(topOfBookTable).append()
       println(s"Appended ${snapshots.count()} top-of-book snapshots to $topOfBookTable")
+      println(Watermark.describeCommit(spark, topOfBookTable, topOfBookBefore))
 
+      val bookStateBefore = Watermark.currentSnapshotId(spark, bookStateTable)
       newState.writeTo(bookStateTable).overwritePartitions()
       println(s"Updated $bookStateTable")
+      println(Watermark.describeCommit(spark, bookStateTable, bookStateBefore))
 
       Watermark.set(spark, ohlcvTable, WatermarkName, current.get)
     }

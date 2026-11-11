@@ -1,6 +1,6 @@
 package orderbook.bronze
 
-import orderbook.common.{OrderBookSchema, PolarisSpark}
+import orderbook.common.{OrderBookSchema, PolarisSpark, Watermark}
 
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.DataFrame
@@ -96,11 +96,15 @@ object IngestRawEvents {
         println(s"IngestRawEvents: no new files under $path — nothing to do")
       } else {
         val events = conform(newRaw)
+        val rawBefore = Watermark.currentSnapshotId(spark, table)
         events.writeTo(table).append()
         println(s"Appended ${events.count()} events from $fileCount new file(s) under $path to $table")
+        println(Watermark.describeCommit(spark, table, rawBefore))
 
+        val filesBefore = Watermark.currentSnapshotId(spark, filesTable)
         newFiles.withColumn("ingested_at", current_timestamp()).writeTo(filesTable).append()
         println(s"Recorded $fileCount file(s) in $filesTable")
+        println(Watermark.describeCommit(spark, filesTable, filesBefore))
       }
     }
 
