@@ -4,7 +4,7 @@ import orderbook.common.PolarisSpark
 
 import java.time.Instant
 import java.time.format.DateTimeFormatter
-import java.time.ZoneOffset
+import java.time.ZoneId
 import org.apache.spark.sql.SparkSession
 
 /** Phase 7 of data_pipeline_plan.md: periodic maintenance for every Iceberg
@@ -42,7 +42,16 @@ object MaintainTables {
     "gold.book_state"
   )
 
-  private val TimestampFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(ZoneOffset.UTC)
+  /** Formats `instant` as a `TIMESTAMP '…'` literal. Spark reads such a
+    * literal in the session time zone, so it has to be written in that zone
+    * too: formatting in UTC shifts the cutoff by the local offset, and with a
+    * 0-hour retention nothing newer than that offset would ever expire.
+    */
+  private def timestampLiteral(spark: SparkSession, instant: Instant): String =
+    DateTimeFormatter
+      .ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
+      .withZone(ZoneId.of(spark.conf.get("spark.sql.session.timeZone")))
+      .format(instant)
 
   private def env(name: String, default: String): String = sys.env.getOrElse(name, default)
 
@@ -58,17 +67,21 @@ object MaintainTables {
       snapshotRetentionHours: Long,
       retainLastSnapshots: Int,
       orphanFileRetentionHours: Long,
-      now: Instant
+      now: Instant,
+      minInputFiles: Option[Int] = None
   ): Unit = {
     val fq = s"$catalog.$table"
 
+    // Iceberg only compacts a file group once it has `min-input-files` small
+    // files (default 5). Lowering it makes compaction visible on demo-sized data.
+    val compactOptions = minInputFiles.fold("")(n => s", options => map('min-input-files', '$n')")
     println(s"MaintainTables: rewriting data files for $fq")
-    spark.sql(s"CALL $catalog.system.rewrite_data_files(table => '$table')").show(truncate = false)
+    spark.sql(s"CALL $catalog.system.rewrite_data_files(table => '$table'$compactOptions)").show(truncate = false)
 
     println(s"MaintainTables: rewriting manifests for $fq")
     spark.sql(s"CALL $catalog.system.rewrite_manifests(table => '$table')").show(truncate = false)
 
-    val snapshotCutoff = TimestampFormatter.format(now.minusSeconds(snapshotRetentionHours * 3600))
+    val snapshotCutoff = timestampLiteral(spark, now.minusSeconds(snapshotRetentionHours * 3600))
     println(s"MaintainTables: expiring snapshots older than $snapshotCutoff for $fq (retaining last $retainLastSnapshots)")
     spark
       .sql(
@@ -77,7 +90,7 @@ object MaintainTables {
       )
       .show(truncate = false)
 
-    val orphanCutoff = TimestampFormatter.format(now.minusSeconds(orphanFileRetentionHours * 3600))
+    val orphanCutoff = timestampLiteral(spark, now.minusSeconds(orphanFileRetentionHours * 3600))
     println(s"MaintainTables: removing orphan files older than $orphanCutoff for $fq")
     spark
       .sql(s"CALL $catalog.system.remove_orphan_files(table => '$table', older_than => TIMESTAMP '$orphanCutoff')")
@@ -91,10 +104,11 @@ object MaintainTables {
     val snapshotRetentionHours   = env("MAINTENANCE_SNAPSHOT_RETENTION_HOURS", "168").toLong
     val retainLastSnapshots      = env("MAINTENANCE_RETAIN_LAST_SNAPSHOTS", "1").toInt
     val orphanFileRetentionHours = env("MAINTENANCE_ORPHAN_FILE_RETENTION_HOURS", "72").toLong
+    val minInputFiles            = sys.env.get("MAINTENANCE_MIN_INPUT_FILES").map(_.toInt)
     val now                      = Instant.now()
 
     ManagedTables.foreach { table =>
-      maintain(spark, catalog, table, snapshotRetentionHours, retainLastSnapshots, orphanFileRetentionHours, now)
+      maintain(spark, catalog, table, snapshotRetentionHours, retainLastSnapshots, orphanFileRetentionHours, now, minInputFiles)
     }
 
     spark.stop()

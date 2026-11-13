@@ -92,6 +92,7 @@ make generate                    # POSTs the first 5000 synthetic events of the 
 make generate-next               # POSTs the next 5000: new seq_no, later timestamps
 make demo-dedup                  # re-sends the last batch, then ingest + silver: all skipped
 make snapshots TABLE=silver.book_events   # snapshot history + watermark, from Polaris
+make pointers                    # each table's metadata.json pointer, from Postgres
 curl --data-binary '{"event_type":"add","instrument":"BTC-USD","timestamp":"2026-10-26T10:00:00Z","side":"buy","price":100.5,"qty":3,"seq_no":1}' \
   http://localhost:4195/events   # or send your own
 make ingest && make silver && make gold

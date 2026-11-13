@@ -36,7 +36,7 @@ curl -s "$(1)" \
 endef
 
 .PHONY: help token health catalogs catalog catalog-roles spark-hello \
-        principals principal-roles namespaces tables snapshots scala-catalogs spark-init-namespaces generate generate-next generate-replay demo-dedup setup \
+        principals principal-roles namespaces tables snapshots pointers scala-catalogs spark-init-namespaces generate generate-next generate-replay demo-dedup setup \
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
         spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
         spark-maintain-tables \
@@ -81,16 +81,25 @@ tables: ## List tables in a namespace (CATALOG=orderbook NAMESPACE=bronze)
 
 SNAPSHOTS ?= 8
 
-snapshots: ## Last SNAPSHOTS snapshots + pipeline watermarks of a table, from Polaris (TABLE=silver.book_events)
+snapshots: ## Last SNAPSHOTS snapshots (records, data files, size) + pipeline watermarks of a table, from Polaris (TABLE=silver.book_events)
 	@if [ -z "$(TABLE)" ]; then \
 	  echo "Set TABLE, e.g. make snapshots TABLE=silver.book_events" >&2; exit 1; \
 	fi
-	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces/$(word 1,$(subst ., ,$(TABLE)))/tables/$(word 2,$(subst ., ,$(TABLE)))) | jq -r '.metadata as $$m \
-	  | "$(TABLE)", \
+	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces/$(word 1,$(subst ., ,$(TABLE)))/tables/$(word 2,$(subst ., ,$(TABLE)))) | jq -r 'def pad($$n): tostring | (. + "                    ")[0:$$n]; \
+	  .metadata as $$m \
+	  | "$(TABLE): \($$m.snapshots | length) snapshots", \
 	    ($$m.properties | to_entries[] | select(.key | startswith("pipeline.watermark")) | "  watermark  \(.key | sub("pipeline.watermark."; "")) = \(.value)"), \
-	    "  committed (UTC)       snapshot_id           operation  added  total", \
+	    "  committed (UTC)       snapshot_id           operation  added  total  files  size", \
 	    ($$m.snapshots | sort_by(."timestamp-ms") | .[-$(SNAPSHOTS):][] \
-	      | "  \((."timestamp-ms" / 1000 | floor | todate) | sub("T"; " ") | sub("Z"; ""))  \(."snapshot-id" | tostring | (. + "                    ")[0:20])  \((.summary.operation + "         ")[0:9])  \((.summary["added-records"] // "0") | (. + "      ")[0:5])  \(.summary["total-records"] // "?")")'
+	      | "  \((."timestamp-ms" / 1000 | floor | todate) | sub("T"; " ") | sub("Z"; ""))  \(."snapshot-id" | pad(20))  \(.summary.operation | pad(9))  \(.summary["added-records"] // "0" | pad(5))  \(.summary["total-records"] // "?" | pad(5))  \(.summary["total-data-files"] // "?" | pad(5))  \((.summary["total-files-size"] // "0" | tonumber / 1024 | floor | tostring) + " KB")")'
+
+pointers: ## Each table's current metadata.json, as Polaris stores it in Postgres (the commit pointer)
+	@docker compose exec -T postgres psql -U polaris -d polaris -c \
+	  "SELECT n.name AS namespace, t.name AS table_name, t.entity_version, \
+	          regexp_replace(t.internal_properties->>'metadata-location', '^.*/metadata/', '.../metadata/') AS metadata_location \
+	   FROM polaris_schema.entities t \
+	   JOIN polaris_schema.entities n ON n.id = t.parent_id AND n.realm_id = t.realm_id \
+	   WHERE t.type_code = 7 ORDER BY 1, 2"
 
 scala-catalogs: ## List catalogs via the Scala job (orderbook.ops.ListCatalogs); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \

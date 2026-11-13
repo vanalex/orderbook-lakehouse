@@ -1,0 +1,185 @@
+$ make generate
+Request 1: sent 5000 events
+Sent 5000 synthetic events to http://localhost:4195/events (seq_no 1-5000, 2023-11-14 23:13:20.0 to 2023-11-15 00:26:49.002)
+
+$ make ingest
+Appended 5000 events from 1 new file(s) under s3://orderbook-warehouse/landing/raw_events to orderbook.bronze.raw_events
+Committed snapshot 6397971251029241674 to orderbook.bronze.raw_events (parent 7672397238273668561)
+Recorded 1 file(s) in orderbook.bronze.ingested_files
+Committed snapshot 6976950373147447308 to orderbook.bronze.ingested_files (parent 4955348766329799801)
+
+$ make pointers
+ namespace |      table_name       | entity_version |                           metadata_location                           
+-----------+-----------------------+----------------+-----------------------------------------------------------------------
+ bronze    | ingested_files        |              2 | .../metadata/00001-c948e63e-629c-4b2c-997b-d71cfa37bb91.metadata.json
+ bronze    | raw_events            |              2 | .../metadata/00001-2865798a-fc22-489d-b21c-dbd503e17e4c.metadata.json
+ gold      | book_state            |              1 | .../metadata/00000-14ae2c80-63d2-48b5-8f7d-707fcd5c863c.metadata.json
+ gold      | ohlcv_bars_1m         |              1 | .../metadata/00000-33a97524-91d9-43b2-92ab-c76cb65d48bd.metadata.json
+ gold      | top_of_book_snapshots |              1 | .../metadata/00000-4efbd364-3e6f-4e12-97a9-01aef947d4d5.metadata.json
+ silver    | book_events           |              1 | .../metadata/00000-fa315ba3-6a56-4747-b812-a9b70ea8216a.metadata.json
+(6 rows)
+
+$ make silver
+Read 5000 new bronze events (through snapshot 6397971251029241674), 5000 clean; inserted 5000 into orderbook.silver.book_events, skipped 0 already there
+Committed snapshot 7844363113241150393 to orderbook.silver.book_events (parent 5396140039234321270)
+
+$ make pointers
+ namespace |      table_name       | entity_version |                           metadata_location                           
+-----------+-----------------------+----------------+-----------------------------------------------------------------------
+ bronze    | ingested_files        |              2 | .../metadata/00001-c948e63e-629c-4b2c-997b-d71cfa37bb91.metadata.json
+ bronze    | raw_events            |              2 | .../metadata/00001-2865798a-fc22-489d-b21c-dbd503e17e4c.metadata.json
+ gold      | book_state            |              1 | .../metadata/00000-14ae2c80-63d2-48b5-8f7d-707fcd5c863c.metadata.json
+ gold      | ohlcv_bars_1m         |              1 | .../metadata/00000-33a97524-91d9-43b2-92ab-c76cb65d48bd.metadata.json
+ gold      | top_of_book_snapshots |              1 | .../metadata/00000-4efbd364-3e6f-4e12-97a9-01aef947d4d5.metadata.json
+ silver    | book_events           |              3 | .../metadata/00002-dac8d75e-68c8-4883-999e-10e56c340ddf.metadata.json
+(6 rows)
+
+$ make demo-dedup
+Request 1: sent 5000 events
+Sent 5000 synthetic events to http://localhost:4195/events (seq_no 1-5000, 2023-11-14 23:13:20.0 to 2023-11-15 00:26:49.002)
+Appended 5000 events from 1 new file(s) under s3://orderbook-warehouse/landing/raw_events to orderbook.bronze.raw_events
+Committed snapshot 4790342861262548548 to orderbook.bronze.raw_events (parent 6397971251029241674)
+Recorded 1 file(s) in orderbook.bronze.ingested_files
+Committed snapshot 1205049619472684051 to orderbook.bronze.ingested_files (parent 6976950373147447308)
+Read 5000 new bronze events (through snapshot 4790342861262548548), 5000 clean; inserted 0 into orderbook.silver.book_events, skipped 5000 already there
+Committed snapshot 4151815833741914939 to orderbook.silver.book_events (parent 7844363113241150393)
+
+$ make snapshots TABLE=silver.book_events
+silver.book_events: 3 snapshots
+  watermark  bronze_snapshot_id = 4790342861262548548
+  committed (UTC)       snapshot_id           operation  added  total  files  size
+  2026-11-13 16:08:20  5396140039234321270   delete     0      0      0      0 KB
+  2026-11-13 16:08:45  7844363113241150393   append     5000   5000   4      54 KB
+  2026-11-13 16:09:02  4151815833741914939   append     0      5000   4      54 KB
+
+$ make snapshots TABLE=bronze.raw_events
+bronze.raw_events: 3 snapshots
+  committed (UTC)       snapshot_id           operation  added  total  files  size
+  2026-11-13 16:08:15  7672397238273668561   delete     0      0      0      0 KB
+  2026-11-13 16:08:38  6397971251029241674   append     5000   5000   1      39 KB
+  2026-11-13 16:08:55  4790342861262548548   append     5000   10000  2      78 KB
+
+$ MAINTENANCE_MIN_INPUT_FILES=2 MAINTENANCE_SNAPSHOT_RETENTION_HOURS=0 MAINTENANCE_RETAIN_LAST_SNAPSHOTS=1 make maintain
+MaintainTables: rewriting data files for orderbook.bronze.raw_events
++--------------------------+----------------------+---------------------+-----------------------+
+|rewritten_data_files_count|added_data_files_count|rewritten_bytes_count|failed_data_files_count|
++--------------------------+----------------------+---------------------+-----------------------+
+|2                         |1                     |79982                |0                      |
++--------------------------+----------------------+---------------------+-----------------------+
+MaintainTables: rewriting manifests for orderbook.bronze.raw_events
+17:09:07 WARN SparkStringUtils: Truncated the string representation of a plan since it was too large. This behavior can be adjusted by setting 'spark.sql.debug.maxToStringFields'.
++-------------------------+---------------------+
+|rewritten_manifests_count|added_manifests_count|
++-------------------------+---------------------+
+|3                        |1                    |
++-------------------------+---------------------+
+MaintainTables: expiring snapshots older than 2026-11-13 17:09:05.404 for orderbook.bronze.raw_events (retaining last 1)
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|deleted_data_files_count|deleted_position_delete_files_count|deleted_equality_delete_files_count|deleted_manifest_files_count|deleted_manifest_lists_count|deleted_statistics_files_count|
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|2                       |0                                  |0                                  |2                           |3                           |0                             |
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+MaintainTables: removing orphan files older than 2026-11-10 17:09:05.404 for orderbook.bronze.raw_events
++--------------------+
+|orphan_file_location|
++--------------------+
++--------------------+
+MaintainTables: rewriting data files for orderbook.silver.book_events
++--------------------------+----------------------+---------------------+-----------------------+
+|rewritten_data_files_count|added_data_files_count|rewritten_bytes_count|failed_data_files_count|
++--------------------------+----------------------+---------------------+-----------------------+
+|0                         |0                     |0                    |0                      |
++--------------------------+----------------------+---------------------+-----------------------+
+MaintainTables: rewriting manifests for orderbook.silver.book_events
++-------------------------+---------------------+
+|rewritten_manifests_count|added_manifests_count|
++-------------------------+---------------------+
+|0                        |0                    |
++-------------------------+---------------------+
+MaintainTables: expiring snapshots older than 2026-11-13 17:09:05.404 for orderbook.silver.book_events (retaining last 1)
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|deleted_data_files_count|deleted_position_delete_files_count|deleted_equality_delete_files_count|deleted_manifest_files_count|deleted_manifest_lists_count|deleted_statistics_files_count|
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|0                       |0                                  |0                                  |0                           |2                           |0                             |
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+MaintainTables: removing orphan files older than 2026-11-10 17:09:05.404 for orderbook.silver.book_events
++--------------------+
+|orphan_file_location|
++--------------------+
++--------------------+
+MaintainTables: rewriting data files for orderbook.gold.ohlcv_bars_1m
++--------------------------+----------------------+---------------------+-----------------------+
+|rewritten_data_files_count|added_data_files_count|rewritten_bytes_count|failed_data_files_count|
++--------------------------+----------------------+---------------------+-----------------------+
+|0                         |0                     |0                    |0                      |
++--------------------------+----------------------+---------------------+-----------------------+
+MaintainTables: rewriting manifests for orderbook.gold.ohlcv_bars_1m
++-------------------------+---------------------+
+|rewritten_manifests_count|added_manifests_count|
++-------------------------+---------------------+
+|0                        |0                    |
++-------------------------+---------------------+
+MaintainTables: expiring snapshots older than 2026-11-13 17:09:05.404 for orderbook.gold.ohlcv_bars_1m (retaining last 1)
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|deleted_data_files_count|deleted_position_delete_files_count|deleted_equality_delete_files_count|deleted_manifest_files_count|deleted_manifest_lists_count|deleted_statistics_files_count|
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|0                       |0                                  |0                                  |0                           |0                           |0                             |
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+MaintainTables: removing orphan files older than 2026-11-10 17:09:05.404 for orderbook.gold.ohlcv_bars_1m
++--------------------+
+|orphan_file_location|
++--------------------+
++--------------------+
+MaintainTables: rewriting data files for orderbook.gold.top_of_book_snapshots
++--------------------------+----------------------+---------------------+-----------------------+
+|rewritten_data_files_count|added_data_files_count|rewritten_bytes_count|failed_data_files_count|
++--------------------------+----------------------+---------------------+-----------------------+
+|0                         |0                     |0                    |0                      |
++--------------------------+----------------------+---------------------+-----------------------+
+MaintainTables: rewriting manifests for orderbook.gold.top_of_book_snapshots
++-------------------------+---------------------+
+|rewritten_manifests_count|added_manifests_count|
++-------------------------+---------------------+
+|0                        |0                    |
++-------------------------+---------------------+
+MaintainTables: expiring snapshots older than 2026-11-13 17:09:05.404 for orderbook.gold.top_of_book_snapshots (retaining last 1)
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|deleted_data_files_count|deleted_position_delete_files_count|deleted_equality_delete_files_count|deleted_manifest_files_count|deleted_manifest_lists_count|deleted_statistics_files_count|
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|0                       |0                                  |0                                  |0                           |0                           |0                             |
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+MaintainTables: removing orphan files older than 2026-11-10 17:09:05.404 for orderbook.gold.top_of_book_snapshots
++--------------------+
+|orphan_file_location|
++--------------------+
++--------------------+
+MaintainTables: rewriting data files for orderbook.gold.book_state
++--------------------------+----------------------+---------------------+-----------------------+
+|rewritten_data_files_count|added_data_files_count|rewritten_bytes_count|failed_data_files_count|
++--------------------------+----------------------+---------------------+-----------------------+
+|0                         |0                     |0                    |0                      |
++--------------------------+----------------------+---------------------+-----------------------+
+MaintainTables: rewriting manifests for orderbook.gold.book_state
++-------------------------+---------------------+
+|rewritten_manifests_count|added_manifests_count|
++-------------------------+---------------------+
+|0                        |0                    |
++-------------------------+---------------------+
+MaintainTables: expiring snapshots older than 2026-11-13 17:09:05.404 for orderbook.gold.book_state (retaining last 1)
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|deleted_data_files_count|deleted_position_delete_files_count|deleted_equality_delete_files_count|deleted_manifest_files_count|deleted_manifest_lists_count|deleted_statistics_files_count|
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+|0                       |0                                  |0                                  |0                           |0                           |0                             |
++------------------------+-----------------------------------+-----------------------------------+----------------------------+----------------------------+------------------------------+
+MaintainTables: removing orphan files older than 2026-11-10 17:09:05.404 for orderbook.gold.book_state
++--------------------+
+|orphan_file_location|
++--------------------+
++--------------------+
+
+$ make snapshots TABLE=bronze.raw_events
+bronze.raw_events: 2 snapshots
+  committed (UTC)       snapshot_id           operation  added  total  files  size
+  2026-11-13 16:09:07  1716029861189876034   replace    10000  10000  1      65 KB
+  2026-11-13 16:09:08  4268994328767020050   replace    0      10000  1      65 KB
+
