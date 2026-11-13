@@ -88,7 +88,10 @@ loading is micro-batch: events land continuously, and each `make ingest` moves w
 into Iceberg.
 
 ```sh
-make generate                    # POSTs 5000 synthetic events, one request per 5000
+make generate                    # POSTs the first 5000 synthetic events of the feed
+make generate-next               # POSTs the next 5000: new seq_no, later timestamps
+make demo-dedup                  # re-sends the last batch, then ingest + silver: all skipped
+make snapshots TABLE=silver.book_events   # snapshot history + watermark, from Polaris
 curl --data-binary '{"event_type":"add","instrument":"BTC-USD","timestamp":"2026-10-26T10:00:00Z","side":"buy","price":100.5,"qty":3,"seq_no":1}' \
   http://localhost:4195/events   # or send your own
 make ingest && make silver && make gold
@@ -104,8 +107,8 @@ unparseable row would make the bronze append fail. Delivery is at least once; si
 - **Incremental processing** (`Watermark.scala`): each job saves the last upstream Iceberg
   snapshot ID it processed as a property on its output table. The next run reads only the changes
   since then, using `start-snapshot-id`, instead of rescanning everything.
-- **Maintenance** (`MaintainTables`): runs Iceberg's compaction, snapshot expiry and orphan-file
-  cleanup on every table, with configurable retention.
+- **Maintenance** (`MaintainTables`): runs Iceberg's data-file and manifest compaction, snapshot
+  expiry and orphan-file cleanup on every table, with configurable retention.
 - **Known limitations, documented in the code:**
   - `modify` events aren't counted in the book because the schema has no `order_id`.
   - If one minute's events arrive across two runs, gold gets two partial bars for that minute.

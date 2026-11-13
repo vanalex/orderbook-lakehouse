@@ -18,6 +18,21 @@ class GenerateSyntheticEventsSpec extends munit.FunSuite {
     assertEquals(GenerateSyntheticEvents.generate(500, instruments), GenerateSyntheticEvents.generate(500, instruments))
   }
 
+  test("a slice continues the same feed: next seq_no, later timestamps, same events") {
+    val first  = GenerateSyntheticEvents.generate(1000, instruments)
+    val second = GenerateSyntheticEvents.generate(1000, instruments, from = 1000)
+    assertEquals(second, GenerateSyntheticEvents.generate(2000, instruments).drop(1000))
+    assertEquals(second.map(_.getLong(6)), (1001L to 2000L).toSeq)
+    assert(second.head.getAs[Timestamp](2).after(first.last.getAs[Timestamp](2)))
+  }
+
+  test("re-sending a slice produces exactly the same events") {
+    assertEquals(
+      GenerateSyntheticEvents.generate(500, instruments, from = 2000),
+      GenerateSyntheticEvents.generate(500, instruments, from = 2000)
+    )
+  }
+
   test("emits no modify events (gold can't apply them without an order_id)") {
     assert(!events.exists(_.getString(0) == EventType.Modify))
   }

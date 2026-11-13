@@ -35,8 +35,15 @@ import scala.util.Random
   * which lands them as files under `s3://orderbook-warehouse/landing/raw_events/`.
   * `IngestRawEvents` then appends those files to `orderbook.bronze.raw_events`.
   *
-  * Run with: sbt "runMain orderbook.tools.GenerateSyntheticEvents [count] [instruments] [url] [intervalMs]"
-  * e.g.:     sbt "runMain orderbook.tools.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD http://localhost:4195/events 1000"
+  * The feed is one continuous, reproducible simulation (fixed seed). A run
+  * sends a slice of it: `count` events starting after the first `from`.
+  * Consecutive slices continue the same `seq_no` sequence, timeline and
+  * order book, so sending the next slice adds genuinely new events that
+  * line up with gold's carried-over `book_state`, and re-sending a slice
+  * sends exact duplicates (`make generate-next` / `make generate-replay`).
+  *
+  * Run with: sbt "runMain orderbook.tools.GenerateSyntheticEvents [count] [instruments] [url] [intervalMs] [from]"
+  * e.g.:     sbt "runMain orderbook.tools.GenerateSyntheticEvents 5000 BTC-USD,ETH-USD http://localhost:4195/events 1000 5000"
   *
   * `url` defaults to the `STREAM_URL` env var, else `http://localhost:4195/events`.
   */
@@ -64,8 +71,21 @@ object GenerateSyntheticEvents {
 
   private def round(p: Double): Double = math.round(p * 100) / 100.0
 
-  /** Pure event generation, no Spark/IO — kept separate so it's unit-testable. */
-  def generate(count: Int, instruments: Seq[String], seed: Long = 42L, intervalMs: Long = 1000L): Seq[Row] = {
+  /** Pure event generation, no Spark/IO — kept separate so it's unit-testable.
+    *
+    * Returns events `from + 1` to `from + count` of the continuous feed for
+    * `seed`: the simulation runs from the start and the first `from` events
+    * are dropped, so a slice always continues exactly where the previous one
+    * stopped (same book, `seq_no` and timestamps).
+    */
+  def generate(
+      count: Int,
+      instruments: Seq[String],
+      seed: Long = 42L,
+      intervalMs: Long = 1000L,
+      from: Int = 0
+  ): Seq[Row] = {
+    require(from >= 0, s"from must be >= 0, got $from")
     val rnd = new Random(seed)
     // Fixed epoch anchor (not wall-clock) so runs are reproducible for a given seed.
     val startMillis = 1700000000000L
@@ -104,7 +124,7 @@ object GenerateSyntheticEvents {
       left
     }
 
-    while (out.length < count) {
+    while (out.length < from + count) {
       stepStart = out.length
       val instrument = instruments(rnd.nextInt(instruments.length))
       val book       = books(instrument)
@@ -146,7 +166,7 @@ object GenerateSyntheticEvents {
       step += 1
     }
 
-    out.take(count).toSeq
+    out.slice(from, from + count).toSeq
   }
 
   /** One event as a JSON line, in the raw-feed shape `IngestRawEvents`
@@ -173,8 +193,9 @@ object GenerateSyntheticEvents {
     val instruments = args.lift(1).map(_.split(",").toIndexedSeq).getOrElse(Seq("BTC-USD", "ETH-USD"))
     val url         = args.lift(2).getOrElse(sys.env.getOrElse("STREAM_URL", "http://localhost:4195/events"))
     val intervalMs  = args.lift(3).map(_.toLong).getOrElse(1000L)
+    val from        = args.lift(4).map(_.toInt).getOrElse(0)
 
-    val rows = generate(count, instruments, intervalMs = intervalMs)
+    val rows = generate(count, instruments, intervalMs = intervalMs, from = from)
 
     rows.grouped(RequestSize).zipWithIndex.foreach { case (chunk, i) =>
       val body = chunk.map(toJsonLine).mkString("", "\n", "\n")
@@ -188,6 +209,9 @@ object GenerateSyntheticEvents {
       println(s"Request ${i + 1}: sent ${chunk.length} events")
     }
 
-    println(s"Sent ${rows.length} synthetic events to $url")
+    println(
+      s"Sent ${rows.length} synthetic events to $url " +
+        s"(seq_no ${rows.head.getLong(6)}-${rows.last.getLong(6)}, ${rows.head.get(2)} to ${rows.last.get(2)})"
+    )
   }
 }

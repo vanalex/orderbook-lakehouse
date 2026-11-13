@@ -36,7 +36,7 @@ curl -s "$(1)" \
 endef
 
 .PHONY: help token health catalogs catalog catalog-roles spark-hello \
-        principals principal-roles namespaces tables scala-catalogs spark-init-namespaces generate setup \
+        principals principal-roles namespaces tables snapshots scala-catalogs spark-init-namespaces generate generate-next generate-replay demo-dedup setup \
         spark-smoke-test spark-create-bronze-table spark-create-silver-table spark-build-silver-events \
         spark-create-gold-tables spark-build-gold-aggregates spark-ingest-raw-events \
         spark-maintain-tables \
@@ -78,6 +78,19 @@ tables: ## List tables in a namespace (CATALOG=orderbook NAMESPACE=bronze)
 	  echo "Set NAMESPACE, e.g. make tables NAMESPACE=bronze" >&2; exit 1; \
 	fi
 	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces/$(NAMESPACE)/tables)
+
+SNAPSHOTS ?= 8
+
+snapshots: ## Last SNAPSHOTS snapshots + pipeline watermarks of a table, from Polaris (TABLE=silver.book_events)
+	@if [ -z "$(TABLE)" ]; then \
+	  echo "Set TABLE, e.g. make snapshots TABLE=silver.book_events" >&2; exit 1; \
+	fi
+	@$(call authed_get,$(CAT)/$(CATALOG)/namespaces/$(word 1,$(subst ., ,$(TABLE)))/tables/$(word 2,$(subst ., ,$(TABLE)))) | jq -r '.metadata as $$m \
+	  | "$(TABLE)", \
+	    ($$m.properties | to_entries[] | select(.key | startswith("pipeline.watermark")) | "  watermark  \(.key | sub("pipeline.watermark."; "")) = \(.value)"), \
+	    "  committed (UTC)       snapshot_id           operation  added  total", \
+	    ($$m.snapshots | sort_by(."timestamp-ms") | .[-$(SNAPSHOTS):][] \
+	      | "  \((."timestamp-ms" / 1000 | floor | todate) | sub("T"; " ") | sub("Z"; ""))  \(."snapshot-id" | tostring | (. + "                    ")[0:20])  \((.summary.operation + "         ")[0:9])  \((.summary["added-records"] // "0") | (. + "      ")[0:5])  \(.summary["total-records"] // "?")")'
 
 scala-catalogs: ## List catalogs via the Scala job (orderbook.ops.ListCatalogs); loads .env if present
 	@set -a; [ -f .env ] && . ./.env || true; set +a; \
@@ -129,6 +142,7 @@ spark-maintain-tables: ## Compact, expire snapshots, and remove orphan files on 
 # ------------------------------------------------------------------
 
 setup: spark-init-namespaces spark-create-bronze-table spark-create-silver-table spark-create-gold-tables clear-landing ## Create namespaces, (re)create all tables empty, and clear the landing prefix
+	@rm -f $(GEN_STATE)
 
 # ------------------------------------------------------------------
 # Ingest is streaming-only, through Redpanda Connect
@@ -141,9 +155,29 @@ STREAM_URL     ?= http://localhost:4195/events
 STREAM_LANDING ?= s3://orderbook-warehouse/landing/raw_events
 GEN_COUNT      ?= 5000
 GEN_INTERVAL   ?= 1000
+GEN_FROM       ?= 0
+# Last slice sent ("<from> <count>"), so generate-next/-replay know where the
+# feed stands. Removed by make setup, which also empties every table.
+GEN_STATE      := .generate-state
 
-generate: ## POST synthetic events to Redpanda Connect (GEN_COUNT=5000, GEN_INTERVAL=1000 ms apart, STREAM_URL)
-	@sbt -batch "runMain orderbook.tools.GenerateSyntheticEvents $(GEN_COUNT) BTC-USD,ETH-USD $(STREAM_URL) $(GEN_INTERVAL)"
+generate: ## POST GEN_COUNT synthetic events, starting after the first GEN_FROM of the feed (default 0), to Redpanda Connect
+	@sbt -batch "runMain orderbook.tools.GenerateSyntheticEvents $(GEN_COUNT) BTC-USD,ETH-USD $(STREAM_URL) $(GEN_INTERVAL) $(GEN_FROM)"
+	@echo "$(GEN_FROM) $(GEN_COUNT)" > $(GEN_STATE)
+
+generate-next: ## POST the next GEN_COUNT events of the feed: new seq_no, later timestamps (first run after setup starts at 0)
+	@from=0; \
+	 if [ -f $(GEN_STATE) ]; then read f c < $(GEN_STATE); from=$$((f + c)); fi; \
+	 $(MAKE) --no-print-directory generate GEN_FROM=$$from
+
+generate-replay: ## POST the last batch again: exact duplicates, for the dedupe demo
+	@if [ ! -f $(GEN_STATE) ]; then echo "Nothing sent since make setup: run make generate or make generate-next first" >&2; exit 1; fi; \
+	 read f c < $(GEN_STATE); \
+	 $(MAKE) --no-print-directory generate GEN_FROM=$$f GEN_COUNT=$$c
+
+demo-dedup: ## Replay the last batch, then ingest + silver: silver should insert 0 and skip them all
+	@$(MAKE) --no-print-directory generate-replay
+	@$(MAKE) --no-print-directory ingest
+	@$(MAKE) --no-print-directory silver
 
 ingest: spark-ingest-raw-events ## Alias for spark-ingest-raw-events
 

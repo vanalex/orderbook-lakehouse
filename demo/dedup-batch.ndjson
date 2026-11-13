@@ -1,0 +1,5 @@
+{"event_type":"snapshot","instrument":"BTC-USD","timestamp":"2023-11-20T00:00:00Z","seq_no":9000001}
+{"event_type":"snapshot","instrument":"BTC-USD","timestamp":"2023-11-20T00:00:00Z","seq_no":9000001}
+{"event_type":"snapshot","instrument":"BTC-USD","timestamp":"2023-11-20T00:00:01Z","seq_no":9000002}
+{"event_type":"add","instrument":"ETH-USD","timestamp":"2023-11-14T22:13:20Z","side":"buy","price":100.16,"qty":57.0,"seq_no":1}
+{"event_type":"fill","instrument":"BTC-USD","timestamp":"2023-11-20T00:00:02Z","side":"buy","price":101.0,"qty":1.0,"seq_no":9000003}

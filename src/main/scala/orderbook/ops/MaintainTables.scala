@@ -13,6 +13,10 @@ import org.apache.spark.sql.SparkSession
   *
   *   - `rewrite_data_files` — compacts the small files that frequent
   *     incremental appends/merges (Phase 6) produce into fewer, larger ones.
+  *   - `rewrite_manifests` — every commit adds at least one small manifest,
+  *     so frequent incremental runs leave many of them, and query planning
+  *     has to open each one. Rewriting regroups them into fewer manifests,
+  *     clustered by partition.
   *   - `expire_snapshots` — drops snapshots (and any data/metadata files
   *     they alone reference) past a retention window, bounding the storage
   *     and metadata growth from those same frequent commits.
@@ -22,7 +26,8 @@ import org.apache.spark.sql.SparkSession
   *     commit aren't swept.
   *
   * Run in that order per table, matching Iceberg's own maintenance guidance:
-  * compact first, so the snapshot/orphan cleanup that follows sees the
+  * compact data files first, then manifests (so they cover the compacted
+  * files), so the snapshot/orphan cleanup that follows sees the
   * post-compaction state.
   *
   * Run with: sbt "runMain orderbook.ops.MaintainTables"
@@ -41,7 +46,7 @@ object MaintainTables {
 
   private def env(name: String, default: String): String = sys.env.getOrElse(name, default)
 
-  /** Runs the three maintenance procedures against `table` (namespace-
+  /** Runs the four maintenance procedures against `table` (namespace-
     * qualified, e.g. `"gold.book_state"`, no catalog prefix). `now` is
     * passed in rather than read internally so callers use one consistent
     * instant across every table in a run.
@@ -59,6 +64,9 @@ object MaintainTables {
 
     println(s"MaintainTables: rewriting data files for $fq")
     spark.sql(s"CALL $catalog.system.rewrite_data_files(table => '$table')").show(truncate = false)
+
+    println(s"MaintainTables: rewriting manifests for $fq")
+    spark.sql(s"CALL $catalog.system.rewrite_manifests(table => '$table')").show(truncate = false)
 
     val snapshotCutoff = TimestampFormatter.format(now.minusSeconds(snapshotRetentionHours * 3600))
     println(s"MaintainTables: expiring snapshots older than $snapshotCutoff for $fq (retaining last $retainLastSnapshots)")
