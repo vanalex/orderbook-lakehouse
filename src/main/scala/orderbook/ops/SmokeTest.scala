@@ -19,6 +19,10 @@ object SmokeTest {
     val catalog = PolarisSpark.catalogName
     val table   = s"$catalog.bronze.smoke_test"
 
+    // A fresh stack (docker compose down -v) has no namespaces until make setup;
+    // create bronze here so the smoke test runs in any order. It's the same
+    // namespace make setup creates, so leaving it behind changes nothing.
+    spark.sql(s"CREATE NAMESPACE IF NOT EXISTS $catalog.bronze")
     spark.sql(s"DROP TABLE IF EXISTS $table")
     spark.sql(s"CREATE TABLE $table (id INT, name STRING) USING iceberg")
     spark.sql(s"INSERT INTO $table VALUES (1, 'abc'), (2, 'def')")

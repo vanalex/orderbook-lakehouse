@@ -1,9 +1,15 @@
 package orderbook.common
 
 class OrderBookSchemaSpec extends munit.FunSuite {
-  test("bronzeRawEvents has the raw feed columns") {
-    val names = OrderBookSchema.bronzeRawEvents.fieldNames.toSet
-    assertEquals(names, Set("event_type", "instrument", "timestamp", "side", "price", "qty", "seq_no"))
+  test("bronzeRawEvents has the raw feed columns plus ingest metadata") {
+    assertEquals(
+      OrderBookSchema.bronzeRawEvents.fieldNames.toSeq,
+      OrderBookSchema.feedColumns ++ Seq("_source_file", "_ingested_at")
+    )
+  }
+
+  test("bronzeRawEvents accepts nulls in every column") {
+    assert(OrderBookSchema.bronzeRawEvents.fields.forall(_.nullable))
   }
 
   test("EventType.All matches the five raw feed event kinds") {

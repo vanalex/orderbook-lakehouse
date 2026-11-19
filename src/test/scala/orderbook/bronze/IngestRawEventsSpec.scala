@@ -3,9 +3,7 @@ package orderbook.bronze
 import orderbook.common.OrderBookSchema
 
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.types.{StringType, StructField, StructType, TimestampType}
-
-import java.sql.Timestamp
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 
 class IngestRawEventsSpec extends munit.FunSuite {
 
@@ -17,64 +15,43 @@ class IngestRawEventsSpec extends munit.FunSuite {
 
   override def afterAll(): Unit = spark.stop()
 
-  private val ts = new Timestamp(1700000000000L)
+  private val landedWithSource =
+    StructType(IngestRawEvents.landedSchema.fields :+ StructField("_source_file", StringType))
 
-  private def withSourceFile(rows: (String, String)*) = {
-    val schema = StructType(
-      Seq(
-        StructField("event_type", StringType, nullable = false),
-        StructField("_source_file", StringType, nullable = false)
-      )
-    )
-    spark.createDataFrame(spark.sparkContext.parallelize(rows.map(Row.fromTuple)), schema)
+  private def landed(rows: Row*) =
+    spark.createDataFrame(spark.sparkContext.parallelize(rows), landedWithSource)
+
+  test("conform types the landed string columns and keeps the source file") {
+    val row = IngestRawEvents
+      .conform(landed(Row("add", "BTC-USD", "2023-11-14T22:13:20Z", "buy", "100.12", "3", "7", "s3://b/a.json")))
+      .collect()
+      .head
+
+    assertEquals(row.getAs[java.sql.Timestamp]("timestamp").toInstant.toString, "2023-11-14T22:13:20Z")
+    assertEquals(row.getAs[java.math.BigDecimal]("price").compareTo(new java.math.BigDecimal("100.12")), 0)
+    assertEquals(row.getAs[Long]("seq_no"), 7L)
+    assertEquals(row.getAs[String]("_source_file"), "s3://b/a.json")
+    assert(!row.isNullAt(row.fieldIndex("_ingested_at")))
   }
 
-  private def ingestedFiles(paths: String*) = {
-    val schema = StructType(
-      Seq(
-        StructField("path", StringType, nullable = false),
-        StructField("ingested_at", TimestampType, nullable = false)
-      )
-    )
-    spark.createDataFrame(spark.sparkContext.parallelize(paths.map(p => Row(p, ts))), schema)
+  test("conform accepts a seq_no written as a JSON double") {
+    val row = IngestRawEvents.conform(landed(Row("add", "BTC-USD", "2023-11-14T22:13:20Z", "buy", "1", "1", "7.0", "f"))).collect().head
+    assertEquals(row.getAs[Long]("seq_no"), 7L)
   }
 
-  test("newFilesOnly keeps all rows when nothing has been ingested yet") {
-    val raw     = withSourceFile("add" -> "file:/data/a.json", "add" -> "file:/data/b.json")
-    val ingested = ingestedFiles()
+  test("conform turns values that don't parse into nulls instead of failing") {
+    val row = IngestRawEvents
+      .conform(landed(Row("add", "BTC-USD", "not-a-time", "buy", "cheap", "1", null, "f")))
+      .collect()
+      .head
 
-    assertEquals(IngestRawEvents.newFilesOnly(raw, ingested, "_source_file").count(), 2L)
+    assert(row.isNullAt(row.fieldIndex("timestamp")))
+    assert(row.isNullAt(row.fieldIndex("price")))
+    assert(row.isNullAt(row.fieldIndex("seq_no")))
   }
 
-  test("newFilesOnly drops rows from an already-ingested file") {
-    val raw      = withSourceFile("add" -> "file:/data/a.json", "add" -> "file:/data/b.json")
-    val ingested = ingestedFiles("file:/data/a.json")
-
-    val remaining = IngestRawEvents.newFilesOnly(raw, ingested, "_source_file").collect()
-    assertEquals(remaining.length, 1)
-    assertEquals(remaining.head.getAs[String]("_source_file"), "file:/data/b.json")
-  }
-
-  test("newFilesOnly drops everything once every file has been ingested") {
-    val raw      = withSourceFile("add" -> "file:/data/a.json")
-    val ingested = ingestedFiles("file:/data/a.json", "file:/data/b.json")
-
-    assertEquals(IngestRawEvents.newFilesOnly(raw, ingested, "_source_file").count(), 0L)
-  }
-
-  test("conform ignores a tracking column not in the bronze schema") {
-    val schema = StructType(
-      Seq(
-        StructField("event_type", StringType, nullable = false),
-        StructField("_source_file", StringType, nullable = false)
-      )
-    )
-    val raw = spark.createDataFrame(
-      spark.sparkContext.parallelize(Seq(Row("snapshot", "file:/data/a.json"))),
-      schema
-    )
-
-    val conformed = IngestRawEvents.conform(raw)
-    assertEquals(conformed.columns.toSeq, OrderBookSchema.bronzeRawEvents.fieldNames.toSeq)
+  test("conform outputs exactly the bronze schema") {
+    val conformed = IngestRawEvents.conform(landed(Row("snapshot", "BTC-USD", null, null, null, null, "1", "f")))
+    assertEquals(conformed.schema.map(f => f.name -> f.dataType), OrderBookSchema.bronzeRawEvents.map(f => f.name -> f.dataType))
   }
 }

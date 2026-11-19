@@ -175,7 +175,7 @@ object GenerateSyntheticEvents {
     * timezone.
     */
   def toJsonLine(row: Row): String = {
-    val fields = OrderBookSchema.bronzeRawEvents.fieldNames.toSeq.zipWithIndex.collect {
+    val fields = OrderBookSchema.feedColumns.zipWithIndex.collect {
       case (name, i) if !row.isNullAt(i) =>
         name -> (row.get(i) match {
           case ts: Timestamp => ujson.Str(ts.toInstant.toString)

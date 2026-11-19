@@ -2,7 +2,7 @@ package orderbook.gold
 
 import orderbook.common.{OrderBookSchema, PolarisSpark}
 
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
@@ -16,10 +16,7 @@ import org.apache.spark.sql.types.StructType
   */
 object CreateGoldTables {
 
-  def main(args: Array[String]): Unit = {
-    val spark   = PolarisSpark.session("orderbook-create-gold-tables")
-    val catalog = PolarisSpark.catalogName
-
+  def create(spark: SparkSession, catalog: String): Unit = {
     val partitionedTables: Seq[(String, StructType)] = Seq(
       s"$catalog.gold.ohlcv_bars_1m"         -> OrderBookSchema.ohlcvBars1m,
       s"$catalog.gold.top_of_book_snapshots" -> OrderBookSchema.topOfBookSnapshots
@@ -39,7 +36,11 @@ object CreateGoldTables {
 
     println(s"Created $bookStateTable:")
     spark.sql(s"DESCRIBE TABLE $bookStateTable").show(truncate = false)
+  }
 
+  def main(args: Array[String]): Unit = {
+    val spark = PolarisSpark.session("orderbook-create-gold-tables")
+    create(spark, PolarisSpark.catalogName)
     spark.stop()
   }
 }

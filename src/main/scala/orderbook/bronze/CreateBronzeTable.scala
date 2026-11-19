@@ -2,36 +2,36 @@ package orderbook.bronze
 
 import orderbook.common.{OrderBookSchema, PolarisSpark}
 
-import org.apache.spark.sql.Row
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.{Row, SparkSession}
 
-/** Creates `orderbook.bronze.raw_events` and `orderbook.bronze.ingested_files`
-  * (Phase 3's file-tracking table, so `IngestRawEvents` can tell which source
-  * files it's already processed) with the schemas from `OrderBookSchema`.
-  * Rerunnable: `createOrReplace()` means both tables always end up matching
-  * the schema currently defined in code.
+/** Creates `orderbook.bronze.raw_events` with the schema from
+  * `OrderBookSchema`. Rerunnable: `createOrReplace()` means the table always
+  * ends up matching the schema currently defined in code.
+  *
+  * Also drops `bronze.ingested_files`, the file-tracking table earlier
+  * versions of `IngestRawEvents` used. The streaming checkpoint replaced it.
+  *
+  * Recreating bronze empties it, so `make setup` also runs `ClearLanding`,
+  * which resets the ingest checkpoint along with the landed files.
   *
   * Run with: sbt "runMain orderbook.bronze.CreateBronzeTable"
   */
 object CreateBronzeTable {
 
+  def create(spark: SparkSession, catalog: String): Unit = {
+    val table = s"$catalog.bronze.raw_events"
+    val empty = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], OrderBookSchema.bronzeRawEvents)
+    empty.writeTo(table).using("iceberg").createOrReplace()
+
+    spark.sql(s"DROP TABLE IF EXISTS $catalog.bronze.ingested_files")
+
+    println(s"Created $table:")
+    spark.sql(s"DESCRIBE TABLE $table").show(truncate = false)
+  }
+
   def main(args: Array[String]): Unit = {
-    val spark   = PolarisSpark.session("orderbook-create-bronze-table")
-    val catalog = PolarisSpark.catalogName
-
-    val tables: Seq[(String, StructType)] = Seq(
-      s"$catalog.bronze.raw_events"      -> OrderBookSchema.bronzeRawEvents,
-      s"$catalog.bronze.ingested_files"  -> OrderBookSchema.ingestedFiles
-    )
-
-    tables.foreach { case (table, schema) =>
-      val empty = spark.createDataFrame(spark.sparkContext.emptyRDD[Row], schema)
-      empty.writeTo(table).using("iceberg").createOrReplace()
-
-      println(s"Created $table:")
-      spark.sql(s"DESCRIBE TABLE $table").show(truncate = false)
-    }
-
+    val spark = PolarisSpark.session("orderbook-create-bronze-table")
+    create(spark, PolarisSpark.catalogName)
     spark.stop()
   }
 }

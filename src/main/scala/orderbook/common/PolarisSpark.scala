@@ -72,6 +72,9 @@ object PolarisSpark {
       // table's storage location via Hadoop's `FileSystem` API instead, so
       // that needs its own `s3://`-scheme filesystem registered — Hadoop's
       // S3A connector, pointed at the same S3 endpoint/credentials.
+      // IngestRawEvents' streaming checkpoint also goes through S3A, but
+      // under the native `s3a://` scheme: Spark writes checkpoints through
+      // Hadoop's FileContext API, whose S3A binding only accepts `s3a://`.
       .config("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
       .config("spark.hadoop.fs.s3a.endpoint", s3Endpoint)
       .config("spark.hadoop.fs.s3a.path.style.access", "true")

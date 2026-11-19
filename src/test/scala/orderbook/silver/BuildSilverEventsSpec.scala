@@ -1,6 +1,7 @@
 package orderbook.silver
 
 import orderbook.common.OrderBookSchema
+import orderbook.testkit.Rows
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.SparkSession
@@ -20,7 +21,10 @@ class BuildSilverEventsSpec extends munit.FunSuite {
   private val ts = new Timestamp(1700000000000L)
 
   private def bronze(rows: Row*) =
-    spark.createDataFrame(spark.sparkContext.parallelize(rows), OrderBookSchema.bronzeRawEvents)
+    OrderBookSchema.align(
+      spark.createDataFrame(spark.sparkContext.parallelize(rows), Rows.feedWithDoubles),
+      OrderBookSchema.bronzeRawEvents
+    )
 
   test("clean keeps well-formed rows and derives event_date") {
     val df = bronze(Row("add", "BTC-USD", ts, "buy", 100.0, 1.0, 1L))
@@ -53,6 +57,35 @@ class BuildSilverEventsSpec extends munit.FunSuite {
   test("clean drops rows with a null or blank instrument") {
     val df = bronze(Row("add", "", ts, "buy", 100.0, 1.0, 1L))
     assertEquals(BuildSilverEvents.clean(df).count(), 0L)
+  }
+
+  test("clean drops rows bronze couldn't parse a timestamp or seq_no for") {
+    val df = bronze(
+      Row("add", "BTC-USD", null, "buy", 100.0, 1.0, 1L),
+      Row("add", "BTC-USD", ts, "buy", 100.0, 1.0, null)
+    )
+    assertEquals(BuildSilverEvents.clean(df).count(), 0L)
+  }
+
+  test("clean drops rows with a null event_type or side") {
+    val df = bronze(
+      Row(null, "BTC-USD", ts, "buy", 100.0, 1.0, 1L),
+      Row("add", "BTC-USD", ts, null, 100.0, 1.0, 2L)
+    )
+    assertEquals(BuildSilverEvents.clean(df).count(), 0L)
+  }
+
+  test("clean drops bronze's metadata columns") {
+    val df = bronze(Row("add", "BTC-USD", ts, "buy", 100.0, 1.0, 1L))
+    assertEquals(BuildSilverEvents.clean(df).columns.toSeq, OrderBookSchema.silverBookEvents.fieldNames.toSeq)
+  }
+
+  test("datePredicate lists the dates, or matches everything for none") {
+    assertEquals(BuildSilverEvents.datePredicate("t.d", Seq.empty), "true")
+    assertEquals(
+      BuildSilverEvents.datePredicate("t.d", Seq(java.sql.Date.valueOf("2023-11-14"), java.sql.Date.valueOf("2023-11-15"))),
+      "t.d IN (DATE '2023-11-14', DATE '2023-11-15')"
+    )
   }
 
   test("clean dedupes on (instrument, seq_no)") {

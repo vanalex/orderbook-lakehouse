@@ -58,13 +58,18 @@ apply one without an `order_id`. The same seed always gives the same data.
 
 | Layer | Job | What it does |
 |---|---|---|
-| **Bronze** `bronze.raw_events` | `IngestRawEvents` | Reads the NDJSON files Redpanda Connect landed in S3 and lines them up with the bronze schema (missing columns become null, extra ones are dropped, types are cast). It records which files it has already loaded in `bronze.ingested_files`, so a rerun only picks up new files. |
+| **Bronze** `bronze.raw_events` | `IngestRawEvents` | Reads the NDJSON files Redpanda Connect landed in S3 with a Structured Streaming query (`Trigger.AvailableNow`: process what's new, commit, stop). Its checkpoint records which files it has read, so a rerun only picks up new files. Every column is nullable: a value that won't parse becomes null for silver to reject, instead of failing the run. Each row keeps its `_source_file` and `_ingested_at`. |
 | **Silver** `silver.book_events` | `BuildSilverEvents` | Drops malformed rows, removes duplicates on `(instrument, seq_no)`, adds `event_date`, then `MERGE INTO`s silver, so a rerun never inserts the same event twice. It stops before writing if more than 50% of a batch is malformed. Partitioned by instrument and date. |
-| **Gold** | `BuildGoldAggregates` | Builds **1-minute OHLCV bars** (open/high/low/close/volume) from trades, and **top-of-book snapshots** (best bid and ask each minute) by keeping a running quantity for every price level. That running book is saved in `gold.book_state`, so orders from earlier runs still count. |
+| **Gold** | `BuildGoldAggregates` | Builds **1-minute OHLCV bars** (open/high/low/close/volume) from trades, and **top-of-book snapshots** (best bid and ask each minute) by keeping a running quantity for every price level. Each run recomputes the minutes its new data touches and `MERGE`s them in by `(instrument, window_start)`, so reruns and minutes split across runs never duplicate a row. The running book is saved in `gold.book_state`, so orders from earlier runs still count. |
 
-From scratch: `make setup && make generate && make ingest && make silver && make gold`.
-`make setup` (re)creates every table empty and deletes the landed files (`make clear-landing`), so
-it also resets the pipeline on a running stack.
+From scratch: `make setup && make generate && make pipeline` (`make pipeline` runs ingest, silver
+and gold in one JVM and Spark session; `make ingest`, `make silver`, `make gold` run them one at a
+time). `make setup` (re)creates every table empty and deletes the landed files and the ingest
+checkpoint (`make clear-landing`), so it also resets the pipeline on a running stack.
+
+Make runs each job with `target/run.sh`, a plain `java` launch on the project's classpath that
+`sbt launcher` writes. Make rebuilds it when the sources change, so sbt starts once instead of
+once per job.
 
 The Scala packages under `src/main/scala/orderbook/` follow the same layers:
 
@@ -76,7 +81,11 @@ The Scala packages under `src/main/scala/orderbook/` follow the same layers:
 | `ops` | `CreateNamespaces`, `MaintainTables`, `ClearLanding`, `SmokeTest`, `ListCatalogs` |
 | `tools` | `GenerateSyntheticEvents` |
 
-Tests mirror the same packages under `src/test/scala/orderbook/`.
+Tests mirror the same packages under `src/test/scala/orderbook/`. `PipelineIntegrationSpec` runs
+the real jobs end to end against a local Iceberg catalog in a temp directory (no Docker) and checks
+that incremental runs equal a full recompute, reruns commit nothing, duplicates and malformed
+events are absorbed, a gold run that crashes midway is recovered, and maintenance doesn't force a
+full re-read. Run everything with `make test`.
 
 ### Ingest (Redpanda Connect)
 
@@ -99,20 +108,28 @@ make ingest && make silver && make gold
 ```
 
 A request body can hold one event or many, one per line. The request returns once the events
-are written to S3. Lines that aren't valid JSON go to `landing/rejected/` instead, because one
-unparseable row would make the bronze append fail. Delivery is at least once; silver's dedupe on
-`(instrument, seq_no)` removes any duplicates.
+are written to S3. Lines that aren't valid JSON go to `landing/rejected/` instead. Valid JSON with
+bad values still reaches bronze, as nulls, and silver drops the row. Delivery is at least once;
+silver's dedupe on `(instrument, seq_no)` removes any duplicates.
 
 ### Design points
 
-- **Incremental processing** (`Watermark.scala`): each job saves the last upstream Iceberg
-  snapshot ID it processed as a property on its output table. The next run reads only the changes
-  since then, using `start-snapshot-id`, instead of rescanning everything.
+- **Incremental processing** (`Watermark.scala`): each job records the last upstream Iceberg
+  snapshot ID it processed in the summary of its own output commit, so the data and the watermark
+  are committed together or not at all. The next run reads only the changes since then, using
+  `start-snapshot-id`, instead of rescanning everything.
+- **Idempotent writes:** silver's insert-only `MERGE` skips events already there; gold's `MERGE`s
+  replace recomputed minutes; `gold.book_state`, the one output that can't be recomputed safely, is
+  written last, in the commit that carries gold's watermark. A crash at any point is fixed by
+  rerunning.
+- **Exact arithmetic:** prices and quantities are `DECIMAL(18,8)`, so a price level that's fully
+  cancelled nets to exactly zero and is dropped from the book.
 - **Maintenance** (`MaintainTables`): runs Iceberg's data-file and manifest compaction, snapshot
-  expiry and orphan-file cleanup on every table, with configurable retention.
-- **Known limitations, documented in the code:**
-  - `modify` events aren't counted in the book because the schema has no `order_id`.
-  - If one minute's events arrive across two runs, gold gets two partial bars for that minute.
+  expiry and orphan-file cleanup on every table, with configurable retention. Its rewrite commits
+  carry the watermarks forward and record which snapshot they rewrote, so expiring old snapshots
+  doesn't force the next run into a full re-read.
+- **Known limitation, documented in the code:** `modify` events aren't counted in the book because
+  the schema has no `order_id`.
 
 ## Analytics
 
